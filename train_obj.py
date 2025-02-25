@@ -241,7 +241,7 @@ if __name__ == "__main__":
 
     if accelerator.is_main_process and args.wandb_project is not None:
         wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name,
-                   dir=jobdir, config=vars(args), sync_ternsorboard=True)
+                   dir=jobdir, config=vars(args), sync_tensorboard=True)
 
     if accelerator.is_main_process:
         writer = SummaryWriter(jobdir)
