@@ -195,6 +195,7 @@ if __name__ == "__main__":
     )
     
     args = parser.parse_args()
+    torch.set_float32_matmul_precision("medium")
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.enable_flash_sdp(enabled=True)
     # Setup accelerator
