@@ -22,6 +22,8 @@ from tqdm import tqdm
 # for distributed training
 from torch.distributed.nn.functional import all_gather
 
+import wandb
+
 
 def create_logger(logging_dir):
     """
@@ -182,6 +184,15 @@ if __name__ == "__main__":
         default=True,
         help="use projection or not in the Kuramoto layer",
     )
+    parser.add_argument(
+        "--wandb_project", type=str, required=False,
+    )
+    parser.add_argument(
+        "--wandb_group", type=str, required=False,
+    )
+    parser.add_argument(
+        "--wandb_run_name", type=str, required=False,
+    )
     
     args = parser.parse_args()
     torch.backends.cudnn.benchmark = True
@@ -226,6 +237,10 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
         worker_init_fn=worker_init_fn,
     )
+
+    if accelerator.is_main_process and args.wandb_project is not None:
+        wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name,
+                   dir=jobdir, config=vars(args), sync_ternsorboard=True)
 
     if accelerator.is_main_process:
         writer = SummaryWriter(jobdir)
@@ -380,3 +395,6 @@ if __name__ == "__main__":
             os.path.join(jobdir, f"model.pth"),
         )
         torch.save(ema.state_dict(), os.path.join(jobdir, f"ema_model.pth"))
+
+    if accelerator.is_main_process and wandb.run is not None:
+        wandb.finish()
