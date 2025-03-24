@@ -235,13 +235,13 @@ if __name__ == '__main__':
             epoch_loss += loss
             record = {}
             record['global_step'] = global_step
-            record['train/step_loss'] = loss
+            record['train/step_loss'] = loss / args.batchsize
             record['train/grad_norm'] = grad_norm.item()
             record.update({f'lr_{k}': lr for k, lr in enumerate(scheduler.get_lr())})
 
             if i == n_batches - 1:
                 record['global_step'] = global_step
-                record['train/epoch_loss'] = epoch_loss / n_batches
+                record['train/epoch_loss'] = epoch_loss / n_batches / args.batchsize
 
             train_pbar.set_postfix(record, refresh=False)
             if i == n_batches - 1 or global_step % args.log_every_n_steps == 0:
