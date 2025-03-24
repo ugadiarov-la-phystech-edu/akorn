@@ -19,7 +19,14 @@ class EpisodesDataset(Dataset):
         assert mode in ['train', 'val', 'valid', 'test']
         if mode in ('valid', 'test'):
             mode = 'val'
-        self.root = os.path.join(root, mode)
+
+        root = os.path.join(root, mode)
+        root_with_obs = os.path.join(root, 'obs')
+        if os.path.isdir(root_with_obs):
+            self.root = root_with_obs
+        else:
+            self.root = root
+
         self.res = res
         self.mode = mode
         self.extension = extension
