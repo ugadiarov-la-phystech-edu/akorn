@@ -139,6 +139,8 @@ if __name__ == '__main__':
     parser.add_argument("--log_every_n_steps", type=int, default=200)
     parser.add_argument("--log_metrics_every_n_epochs", type=int, default=1)
     parser.add_argument("--visualize_n_images", type=int, default=2)
+    parser.add_argument('--save_every_n_epochs', type=int, default=5)
+    parser.add_argument('--save_path', type=str, required=True)
     parser.add_argument(
         "--wandb_project", type=str, required=False,
     )
@@ -263,27 +265,37 @@ if __name__ == '__main__':
             # treat segmentations with class_id <= 0 as background
             gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
             k += images.size()[0]
-            if i == 0 or epoch % args.log_metrics_every_n_epochs == 0:
+            do_log_metrics = epoch % args.log_metrics_every_n_epochs == 0
+            if i == 0 or do_log_metrics:
                 loss, aux_output = akornsaur.step(images, do_predict_masks=True)
                 vis_images = images[:args.visualize_n_images]
                 vis_gt_masks = gt_masks[:args.visualize_n_images].to(torch.int64).squeeze(1)
                 vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=args.num_slots)
                 slot_attention_masks = aux_output["slot_attention_masks_hard"][:args.visualize_n_images]
                 decoder_masks = aux_output["decoder_masks_hard"][:args.visualize_n_images]
-                vis_grid = grid_numpy(images, vis_gt_masks, decoder_masks, slot_attention_masks)
+                vis_grid = grid_numpy(vis_images, vis_gt_masks, decoder_masks, slot_attention_masks)
             else:
                 loss, aux_output = akornsaur.step(images, do_predict_masks=False)
 
             val_loss += loss.item()
-            gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
-            ari_slot_attention.update(gt_masks, aux_output["slot_attention_masks_hard"])
-            ari_decoder.update(gt_masks, aux_output["decoder_masks_hard"])
+            if do_log_metrics:
+                gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
+                ari_slot_attention.update(gt_masks, aux_output["slot_attention_masks_hard"])
+                ari_decoder.update(gt_masks, aux_output["decoder_masks_hard"])
             if i == val_n_batches - 1:
                 record['val/loss'] = val_loss / k
-                record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
-                record['val/ari_decoder'] = ari_decoder.compute().item()
+                if do_log_metrics:
+                    record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
+                    record['val/ari_decoder'] = ari_decoder.compute().item()
                 val_pbar.set_postfix(record)
 
         val_pbar.close()
         record['val/visualization'] = wandb.Image(vis_grid)
         maybe_log_wandb(record, args.wandb_project, args.wandb_group, args.wandb_run_name)
+
+        if epoch % args.save_every_n_epochs == 0:
+            checkpoint = {'model': akornsaur.state_dict(), 'optimizer': optimizer.state_dict(),
+                          'global_step': global_step, 'epoch': epoch,}
+            checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
+            os.makedirs(checkpoint_folder, exist_ok=True)
+            torch.save(checkpoint, os.path.join(checkpoint_folder, 'checkpoint.pt'))
