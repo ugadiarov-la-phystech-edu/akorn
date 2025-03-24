@@ -1,7 +1,10 @@
-def load_data(data, data_root, data_imsize, is_eval=False):
+def load_data(data, data_root, data_imsize, is_eval=False, kind=None):
     # Data loading
     
     collate_fn = None
+    split = 'test' if is_eval else 'train'
+    if kind is None:
+        kind = 'image' if is_eval else 'pair'
     
     if data == "clevrtex_full" or data == "clevrtex_camo" or data == "clevrtex_outd":
         from source.data.datasets.objs.clevr_tex import get_clevrtex_pair, get_clevrtex, collate_fn
@@ -23,25 +26,24 @@ def load_data(data, data_root, data_imsize, is_eval=False):
             else data_root
         )
         imsize = 128 if data_imsize is None else data_imsize
-        if is_eval:
-            dataset = get_clevrtex(data_root, split="test", data_type=data_type, imsize=imsize, return_meta_data=True)
+
+        if kind == 'image':
+            dataset = get_clevrtex(data_root, split=split, data_type=data_type, imsize=imsize, return_meta_data=True)
+        elif kind == 'pair':
+            dataset = get_clevrtex_pair(root=data_root, split=split, )
         else:
-            dataset = get_clevrtex_pair(
-                root=data_root,
-                split="train",
-            )
+            raise ValueError(f'Unsupported dataset kind: {kind}')
             
     elif data == "clevr":
         from source.data.datasets.objs.clevr import get_clevr_pair, get_clevr
         imsize = 128 if data_imsize is None else data_imsize
         data_root = "./data/clevr_with_masks/"
-        if is_eval:
-            dataset = get_clevr(data_root, split="test", imsize=imsize)
+        if kind == 'image':
+            dataset = get_clevr(data_root, split=split, imsize=imsize)
+        elif kind == 'pair':
+            dataset = get_clevr_pair(root="./data/clevr_with_masks/", split=split, )
         else:
-            dataset = get_clevr_pair(
-                root="./data/clevr_with_masks/",
-                split="train",
-            )
+            raise ValueError(f'Unsupported dataset kind: {kind}')
 
     elif data == "imagenet":
         from source.data.datasets.objs.imagenet import get_imagenet_pair

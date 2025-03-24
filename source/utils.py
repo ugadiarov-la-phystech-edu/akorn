@@ -2,6 +2,7 @@ import torch
 import os
 import numpy as np
 import torch.nn.functional as F
+from torchvision.utils import make_grid
 
 PLOTCOLORS = {
     "blue": "#377eb8",
@@ -151,3 +152,124 @@ def gen_saccade_imgs(img, psize, r):
         for w in range(0, psize, r):
             imgs.append(img[:, :, h : h + H, w : w + W])
     return imgs, img[:, :, psize // 2 : H + psize // 2, psize // 2 : W + psize // 2]
+
+
+def to_one_hot(tsr, num_classes=-1):
+    assert len(tsr.size()) == 3
+    assert num_classes == -1 or num_classes > tsr.max()
+    return torch.nn.functional.one_hot(tsr, num_classes=num_classes).movedim(-1, 1)
+
+
+def vis_mask(images, masks):
+    images = images.unsqueeze(1)
+    masks = masks.unsqueeze(2)
+    return images * masks + (1 - masks)
+
+
+def grid_numpy(images, gt_masks, decoder_masks, slot_attention_masks):
+    attn_gt = vis_mask(images, gt_masks)
+    attn_decoder = vis_mask(images, decoder_masks)
+    attn_sa = vis_mask(images, slot_attention_masks)
+    log_image = torch.stack([attn_gt, attn_sa, attn_decoder], dim=1)
+    log_image = log_image.flatten(end_dim=2)
+    log_image = make_grid(log_image, nrow=gt_masks.size()[1], pad_value=0.5).movedim(0, -1).cpu().numpy()
+
+    return log_image
+
+
+def adjusted_rand_index(
+    true_mask: torch.Tensor,
+    pred_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Computes the adjusted Rand index (ARI), a clustering similarity score.
+
+    Adapted to Pytorch from SAVi Jax implementation:
+    https://github.com/google-research/slot-attention-video/blob/main/savi/lib/metrics.py
+
+    Args:
+        true_mask: A binary tensor of shape (batch_size, n_points, n_true_clusters). The true cluster
+            assignment encoded as one-hot with missing values allowed.
+        pred_mask: A binary tensor of shape (batch_size, n_points, n_pred_clusters). The predicted
+            cluster assignment encoded as one-hot.
+
+    Returns:
+        ARI scores as a tensor of shape (batch_size,).
+    """
+    N = torch.einsum("bpc, bpk -> bck", true_mask.to(torch.float64), pred_mask.to(torch.float64))
+    A = torch.sum(N, axis=-1)  # row-sum  (batch_size, c)
+    B = torch.sum(N, axis=-2)  # col-sum  (batch_size, k)
+    num_points = torch.sum(A, axis=1)
+
+    rindex = torch.sum(N * (N - 1), axis=[1, 2])
+    aindex = torch.sum(A * (A - 1), axis=1)
+    bindex = torch.sum(B * (B - 1), axis=1)
+    expected_rindex = aindex * bindex / torch.clip(num_points * (num_points - 1), min=1)
+    max_rindex = (aindex + bindex) / 2
+    denominator = max_rindex - expected_rindex
+    ari = (rindex - expected_rindex) / denominator
+
+    # There are two cases for which the denominator can be zero:
+    # 1. If both label_pred and label_true assign all pixels to a single cluster.
+    #    (max_rindex == expected_rindex == rindex == num_points * (num_points-1))
+    # 2. If both label_pred and label_true assign max 1 point to each cluster.
+    #    (max_rindex == expected_rindex == rindex == 0)
+    # In both cases, we want the ARI score to be 1.0:
+    return torch.where(denominator != 0.0, ari, 1.0)
+
+
+class AdjustedRandIndex:
+    """Abstract ARI metric."""
+
+    def __init__(
+        self,
+        ignore_background: bool = False,
+        ignore_overlaps: bool = False,
+    ):
+        self.ignore_background = ignore_background
+        self.ignore_overlaps = ignore_overlaps
+        self.total_ari = 0
+        self.n_images = 0
+
+    def update(self, true_mask: torch.Tensor, pred_mask: torch.Tensor):
+        """Update metric.
+
+        Args:
+            true_mask: Binary true masks of shape (batch, n_true_classes, height, width)
+            pred_mask: One-hot predicted masks of shape (batch, n_pred_classes, height, width)
+        """
+        true_mask = true_mask.flatten(start_dim=2).movedim(1, 2)
+        pred_mask = pred_mask.flatten(start_dim=2).movedim(1, 2)
+        assert true_mask.ndim == 3
+        assert pred_mask.ndim == 3
+        if torch.any((true_mask != 0.0) & (true_mask != 1.0)):
+            raise ValueError("`true_mask` is not binary")
+        if torch.any((pred_mask != 0.0) & (pred_mask != 1.0)):
+            raise ValueError("`pred_mask` is not binary")
+        if torch.any(pred_mask.sum(dim=-1) != 1.0):
+            raise ValueError("`pred_mask` is not one-hot")
+
+        n_true_classes_per_point = true_mask.sum(dim=-1)
+        if not self.ignore_overlaps and torch.any(n_true_classes_per_point > 1.0):
+            raise ValueError("There are overlaps in `true_mask`.")
+        if self.ignore_background and torch.any(n_true_classes_per_point != 1.0):
+            raise ValueError("`true_mask` is not one-hot")
+
+        if self.ignore_overlaps:
+            overlaps = n_true_classes_per_point > 1.0
+            true_mask = true_mask.clone()
+            true_mask[overlaps] = 0.0  # ARI ignores pixels where all ground truth clusters are zero
+
+        if self.ignore_background:
+            true_mask = true_mask[..., 1:]  # Remove the background mask
+
+        values = adjusted_rand_index(true_mask, pred_mask)
+
+        # Special case: skip samples without any ground truth mask
+        non_empty = n_true_classes_per_point.sum(dim=-1) > 0
+        values = values[non_empty]
+
+        self.total_ari += values.sum()
+        self.n_images += len(values)
+
+    def compute(self):
+        return self.total_ari / self.n_images

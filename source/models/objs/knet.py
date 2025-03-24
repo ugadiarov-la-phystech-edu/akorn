@@ -172,8 +172,11 @@ class AKOrN(nn.Module):
 
         return c, x, xs, es
 
-    def forward(self, input, return_xs=False, return_es=False):
+    def forward(self, input, return_xs=False, return_es=False, return_activation=False):
         c, x, xs, es = self.feature(input)
+        if return_activation:
+            return c
+
         c = self.out(c)
 
         ret = [c]

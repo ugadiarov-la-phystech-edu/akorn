@@ -90,3 +90,19 @@ class LinearWarmupScheduler(_LRScheduler):
             it = self.current_iter + 1
         self.current_iter = it
         super(LinearWarmupScheduler, self).step(it)
+
+
+class ExpDecayWithLinearWarmupScheduler(LinearWarmupScheduler):
+    def __init__(self, optimizer, warmup_iters, decay_steps, decay_rate, last_iter=-1):
+        super().__init__(optimizer, warmup_iters, last_iter)
+        self.decay_steps = decay_steps
+        self.decay_rate = decay_rate
+
+    def get_lr(self):
+        lrs = super().get_lr()
+        if self.current_iter > self.warmup_iters:
+            it = self.current_iter - self.warmup_iters
+            decay_steps = self.decay_steps - self.warmup_iters
+            lrs = [lr * self.decay_rate ** (it / decay_steps) for lr in lrs]
+
+        return lrs
