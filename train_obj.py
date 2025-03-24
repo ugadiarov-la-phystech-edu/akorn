@@ -6,6 +6,8 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from torch import optim
+
+from source.gen_image import get_image
 from source.training_utils import save_checkpoint, save_model, LinearWarmupScheduler, add_gradient_histograms
 from source.data.datasets.objs.load_data import load_data
 
@@ -194,6 +196,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_run_name", type=str, required=False,
     )
+    parser.add_argument("--vis_n_clusters", type=int, nargs='+')
     
     args = parser.parse_args()
     torch.set_float32_matmul_precision("medium")
@@ -228,6 +231,8 @@ if __name__ == "__main__":
         worker_init_fn = None
 
     sstrainset, imsize, _ = load_data(args.data, args.data_root, args.data_imsize, False,
+                                      image_file_extension=args.image_file_extension)
+    val_dataset, *_ = load_data(args.data, args.data_root, args.data_imsize, True,
                                       image_file_extension=args.image_file_extension)
 
     if accelerator.is_main_process:
@@ -392,6 +397,17 @@ if __name__ == "__main__":
                     checkpoint_dir=jobdir,
                 )
                 save_model(ema, epoch, checkpoint_dir=jobdir, prefix="ema")
+
+        if accelerator.is_main_process:
+            model = ema.ema_model
+            image = random.choice(val_dataset)
+            image = image.unsqueeze(0).to('cuda')
+            vis_images = []
+            with torch.no_grad():
+                for n_clusters in args.vis_n_clusters:
+                    vis_image = get_image(model, image, n_clusters=n_clusters, pca=True)
+                    writer.add_image(f'train/vis_n-clusters-{n_clusters}', vis_image, epoch)
+
     if accelerator.is_main_process:
         torch.save(
             accelerator.unwrap_model(net).state_dict(),

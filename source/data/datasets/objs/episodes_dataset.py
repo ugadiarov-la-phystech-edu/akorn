@@ -7,6 +7,7 @@ import os
 import os.path as osp
 import torch
 from PIL import Image, ImageFile
+from torchvision import transforms
 
 from source.data.augs import simclr_augmentation
 
@@ -14,7 +15,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class EpisodesDataset(Dataset):
-    def __init__(self, root, mode, res=128, extension='png'):
+    def __init__(self, root, mode, res=128, extension='png', return_tensor=True,):
         assert mode in ['train', 'val', 'valid', 'test']
         if mode in ('valid', 'test'):
             mode = 'val'
@@ -22,6 +23,8 @@ class EpisodesDataset(Dataset):
         self.res = res
         self.mode = mode
         self.extension = extension
+        self.return_tensor = return_tensor
+        self.to_tensor = transforms.ToTensor()
 
         # Get all numbers
         self.folders = []
@@ -61,6 +64,10 @@ class EpisodesDataset(Dataset):
         in_episode_index = index - offset
         img = Image.open(self.episode_images[ep][in_episode_index])
         img = img.resize((self.res, self.res))
+
+        if self.return_tensor:
+            return self.to_tensor(img)
+
         return img
 
     def __len__(self):
@@ -69,7 +76,7 @@ class EpisodesDataset(Dataset):
 
 class AugmentedPairEpisodeDataset(EpisodesDataset):
     def __init__(self, root, mode, res=128, extension='png', hflip=False):
-        super().__init__(root, mode, res, extension)
+        super().__init__(root, mode, res, extension, return_tensor=False)
         self.transform = simclr_augmentation(imsize=self.res, hflip=hflip)
 
     def __getitem__(self, index):
