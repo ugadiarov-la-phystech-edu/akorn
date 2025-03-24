@@ -1,10 +1,12 @@
-def load_data(data, data_root, data_imsize, is_eval=False, kind=None):
+def load_data(data, data_root, data_imsize, is_eval=False, kind=None, image_file_extension=None):
     # Data loading
     
     collate_fn = None
     split = 'test' if is_eval else 'train'
     if kind is None:
         kind = 'image' if is_eval else 'pair'
+    elif kind not in ('image', 'pair'):
+        raise ValueError(f'Invalid dataset kind: {kind}')
     
     if data == "clevrtex_full" or data == "clevrtex_camo" or data == "clevrtex_outd":
         from source.data.datasets.objs.clevr_tex import get_clevrtex_pair, get_clevrtex, collate_fn
@@ -102,5 +104,15 @@ def load_data(data, data_root, data_imsize, is_eval=False, kind=None):
             split="train",
             imsize=imsize,
         )
+    elif data == 'episode_dataset':
+        from source.data.datasets.objs.episodes_dataset import EpisodesDataset, AugmentedPairEpisodeDataset
+        kwargs = dict(root=data_root, mode=split, res=data_imsize, extension=image_file_extension)
+        if kind == 'image':
+            dataset = EpisodesDataset(**kwargs)
+        elif kind == 'pair':
+            dataset = AugmentedPairEpisodeDataset(**kwargs)
+
+        imsize = data_imsize
+
     return dataset, imsize, collate_fn
 

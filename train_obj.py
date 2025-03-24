@@ -111,6 +111,7 @@ if __name__ == "__main__":
         default=None,
         help="Image size. If None, use the default size of each dataset",
     )
+    parser.add_argument("--image_file_extension", type=str, required=False)
 
     # Simclr options
     parser.add_argument("--normalize", type=str2bool, default=True)
@@ -226,7 +227,8 @@ if __name__ == "__main__":
     else:
         worker_init_fn = None
 
-    sstrainset, imsize, _ = load_data(args.data, args.data_root, args.data_imsize, False)
+    sstrainset, imsize, _ = load_data(args.data, args.data_root, args.data_imsize, False,
+                                      image_file_extension=args.image_file_extension)
 
     if accelerator.is_main_process:
         logger.info(f"Dataset contains {len(sstrainset):,} images")
