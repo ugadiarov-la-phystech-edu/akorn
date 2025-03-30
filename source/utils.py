@@ -163,16 +163,23 @@ def to_one_hot(tsr, num_classes=-1):
 def vis_mask(images, masks):
     images = images.unsqueeze(1)
     masks = masks.unsqueeze(2)
-    return images * masks + (1 - masks)
+    return torch.cat([images, images * masks + (1 - masks)], dim=1)
 
 
 def grid_numpy(images, gt_masks, decoder_masks, slot_attention_masks):
-    attn_gt = vis_mask(images, gt_masks)
+    log_image = []
+    if gt_masks is not None:
+        attn_gt = vis_mask(images, gt_masks)
+        log_image.append(attn_gt)
+
     attn_decoder = vis_mask(images, decoder_masks)
     attn_sa = vis_mask(images, slot_attention_masks)
-    log_image = torch.stack([attn_gt, attn_sa, attn_decoder], dim=1)
+    log_image.append(attn_sa)
+    log_image.append(attn_decoder)
+
+    log_image = torch.stack(log_image, dim=1)
     log_image = log_image.flatten(end_dim=2)
-    log_image = make_grid(log_image, nrow=gt_masks.size()[1], pad_value=0.5).movedim(0, -1).cpu().numpy()
+    log_image = make_grid(log_image, nrow=attn_decoder.size()[1], pad_value=0.5).movedim(0, -1).cpu().numpy()
 
     return log_image
 

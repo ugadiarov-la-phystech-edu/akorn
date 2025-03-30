@@ -17,12 +17,15 @@ from source.utils import str2bool, to_one_hot, grid_numpy, AdjustedRandIndex
 
 
 TQDM_MIN_INTERVAL = 5
+DEVICE = 'cuda'
 
 
-def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False):
+def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False,
+               image_file_extension=None):
     from source.data.datasets.objs.load_data import load_data
 
-    dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind='image')
+    dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind='image',
+                                            image_file_extension=image_file_extension)
 
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
     if data in ("clevrtex_full", "clevrtex_outd", "clevrtex_camo", "coco"):
@@ -137,7 +140,8 @@ if __name__ == '__main__':
     parser.add_argument("--grad_norm_clip", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--log_every_n_steps", type=int, default=200)
-    parser.add_argument("--log_metrics_every_n_epochs", type=int, default=1)
+    parser.add_argument("--log_ari_every_n_epochs", type=int, default=1)
+    parser.add_argument("--visualize_every_n_epochs", type=int, default=1)
     parser.add_argument("--visualize_n_images", type=int, default=2)
     parser.add_argument('--save_every_n_epochs', type=int, default=5)
     parser.add_argument('--save_path', type=str, required=True)
@@ -150,6 +154,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--wandb_run_name", type=str, required=False,
     )
+    parser.add_argument("--image_file_extension", type=str, required=False)
 
     args = parser.parse_args()
     torch.backends.cudnn.benchmark = True
@@ -204,9 +209,11 @@ if __name__ == '__main__':
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
 
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
-                                     num_workers=args.num_workers, is_eval=False)
+                                     num_workers=args.num_workers, is_eval=False,
+                                     image_file_extension=args.image_file_extension)
     val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=False,
-                                     num_workers=args.num_workers, is_eval=True)
+                                     num_workers=args.num_workers, is_eval=True,
+                                     image_file_extension=args.image_file_extension)
     if args.wandb_project is not None:
         path = os.path.join('wandb', args.wandb_run_name)
         os.makedirs(path, exist_ok=True)
@@ -219,7 +226,13 @@ if __name__ == '__main__':
         epoch_loss = 0
         n_batches = len(train_dataloader)
         train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
-        for i, (_, images, _, _) in train_pbar:
+        for i, batch in train_pbar:
+            if isinstance(batch, tuple):
+                assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
+                _, images, _, _ = batch
+            else:
+                images = batch
+
             images = images.to('cuda')
             global_step += 1
             loss, aux_output = akornsaur.step(images, do_predict_masks=False)
@@ -259,32 +272,46 @@ if __name__ == '__main__':
         ari_slot_attention = AdjustedRandIndex(ignore_background=True, ignore_overlaps=False)
         ari_decoder = AdjustedRandIndex(ignore_background=True, ignore_overlaps=False)
         val_pbar = tqdm(enumerate(val_dataloader), desc='Validation', mininterval=TQDM_MIN_INTERVAL)
-        for i, (_, images, gt_masks, _) in val_pbar:
-            images = images.to('cuda')
-            gt_masks = gt_masks.to(images.device)
-            # treat segmentations with class_id <= 0 as background
-            gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
+        for i, batch in val_pbar:
+            if isinstance(batch, tuple):
+                assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
+                _, images, gt_masks, _ = batch
+                gt_masks = gt_masks.to(DEVICE)
+                # treat segmentations with class_id <= 0 as background
+                gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
+                has_gt_masks = True
+            else:
+                images = batch
+                gt_masks = None
+                has_gt_masks = False
+
+            images = images.to(DEVICE)
             k += images.size()[0]
-            do_log_metrics = epoch % args.log_metrics_every_n_epochs == 0
-            if i == 0 or do_log_metrics:
+            do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
+            do_need_visualize = epoch % args.visualize_every_n_epochs == 0
+            if (i == 0 and do_need_visualize) or do_need_log_ari:
                 loss, aux_output = akornsaur.step(images, do_predict_masks=True)
                 vis_images = images[:args.visualize_n_images]
-                vis_gt_masks = gt_masks[:args.visualize_n_images].to(torch.int64).squeeze(1)
-                vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=args.num_slots)
                 slot_attention_masks = aux_output["slot_attention_masks_hard"][:args.visualize_n_images]
                 decoder_masks = aux_output["decoder_masks_hard"][:args.visualize_n_images]
+                if has_gt_masks:
+                    vis_gt_masks = gt_masks[:args.visualize_n_images].to(torch.int64).squeeze(1)
+                    vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=args.num_slots)
+                else:
+                    vis_gt_masks = None
+
                 vis_grid = grid_numpy(vis_images, vis_gt_masks, decoder_masks, slot_attention_masks)
             else:
                 loss, aux_output = akornsaur.step(images, do_predict_masks=False)
 
             val_loss += loss.item()
-            if do_log_metrics:
+            if do_need_log_ari:
                 gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
                 ari_slot_attention.update(gt_masks, aux_output["slot_attention_masks_hard"])
                 ari_decoder.update(gt_masks, aux_output["decoder_masks_hard"])
             if i == val_n_batches - 1:
                 record['val/loss'] = val_loss / k
-                if do_log_metrics:
+                if do_need_log_ari:
                     record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
                     record['val/ari_decoder'] = ari_decoder.compute().item()
                 val_pbar.set_postfix(record)
