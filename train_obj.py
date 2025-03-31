@@ -197,6 +197,7 @@ if __name__ == "__main__":
         "--wandb_run_name", type=str, required=False,
     )
     parser.add_argument("--vis_n_clusters", type=int, nargs='+')
+    parser.add_argument("--vis_n_images", type=int, default=1)
     
     args = parser.parse_args()
     torch.set_float32_matmul_precision("medium")
@@ -250,7 +251,7 @@ if __name__ == "__main__":
         config = dict(vars(args))
         config['device_info'] = str(torch.cuda.get_device_properties(torch.cuda.current_device()))
         wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name,
-                   dir=jobdir, config=vars(args), sync_tensorboard=True)
+                   dir=jobdir, config=config, sync_tensorboard=True)
 
     if accelerator.is_main_process:
         writer = SummaryWriter(jobdir)
@@ -402,13 +403,15 @@ if __name__ == "__main__":
 
         if accelerator.is_main_process:
             model = ema.ema_model
-            image = random.choice(val_dataset)
-            image = image.unsqueeze(0).to('cuda')
-            vis_images = []
-            with torch.no_grad():
-                for n_clusters in args.vis_n_clusters:
-                    vis_image = get_image(model, image, n_clusters=n_clusters, pca=True)
-                    writer.add_image(f'train/vis_n-clusters-{n_clusters}', vis_image, epoch)
+            image_ids = random.sample(list(range(len(val_dataset))), args.vis_n_images)
+            for image_id in image_ids:
+                image = val_dataset[image_id]
+                image = image.unsqueeze(0).to('cuda')
+                vis_images = []
+                with torch.no_grad():
+                    for n_clusters in args.vis_n_clusters:
+                        vis_image = get_image(model, image, n_clusters=n_clusters, pca=True)
+                        writer.add_image(f'train/vis_n-clusters-{n_clusters}', vis_image, epoch)
 
     if accelerator.is_main_process:
         torch.save(
