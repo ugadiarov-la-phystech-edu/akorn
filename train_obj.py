@@ -247,6 +247,8 @@ if __name__ == "__main__":
     )
 
     if accelerator.is_main_process and args.wandb_project is not None:
+        config = dict(vars(args))
+        config['device_info'] = str(torch.cuda.get_device_properties(torch.cuda.current_device()))
         wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name,
                    dir=jobdir, config=vars(args), sync_tensorboard=True)
 
