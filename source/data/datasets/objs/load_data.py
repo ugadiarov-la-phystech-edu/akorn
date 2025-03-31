@@ -113,6 +113,15 @@ def load_data(data, data_root, data_imsize, is_eval=False, kind=None, image_file
             dataset = AugmentedPairEpisodeDataset(**kwargs)
 
         imsize = data_imsize
+    elif data == 'image_dataset':
+        from source.data.datasets.objs.image_dataset import ImageDataset, AugmentedPairImageDataset
+        kwargs = dict(root=data_root, mode=split, res=data_imsize, extension=image_file_extension)
+        if kind == 'image':
+            dataset = ImageDataset(**kwargs)
+        elif kind == 'pair':
+            dataset = AugmentedPairImageDataset(**kwargs)
+
+        imsize = data_imsize
 
     return dataset, imsize, collate_fn
 
