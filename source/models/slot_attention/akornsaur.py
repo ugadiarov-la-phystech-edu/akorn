@@ -29,7 +29,7 @@ class AkornSAur(nn.Module):
 
         return self
 
-    def forward(self, images: torch.Tensor):
+    def _get_features_slot_attention(self, images: torch.Tensor, slots_initial: torch.Tensor = None):
         # images.shape -> batch_size, n_channels, height, width
         batch_size = images.size()[0]
 
@@ -42,11 +42,20 @@ class AkornSAur(nn.Module):
         # x.shape -> batch_size, n_patches_h x n_patches_w, projection_dim
         x = self.features_projector(x)
 
-        slots_initial = self.initializer(batch_size=batch_size)
-        slot_attention_output = self.slot_attention(slots_initial, x)
+        if slots_initial is None:
+            slots_initial = self.initializer(batch_size=batch_size)
+
+        return features, self.slot_attention(slots_initial, x)
+
+    def forward(self, images: torch.Tensor, slots_initial: torch.Tensor = None):
+        features, slot_attention_output = self._get_features_slot_attention(images, slots_initial)
         decoder_output = self.decoder(slot_attention_output['slots'])
 
         return {'features': features, 'slot_attention': slot_attention_output, 'decoder': decoder_output}
+
+    def get_slots(self, images: torch.Tensor, slots_initial: torch.Tensor = None):
+        _, slot_attention_output = self._get_features_slot_attention(images, slots_initial)
+        return slot_attention_output['slots']
 
     def process_masks(
         self,
