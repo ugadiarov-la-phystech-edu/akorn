@@ -355,10 +355,12 @@ if __name__ == "__main__":
     total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print(f"Total number of basemodel parameters: {total_params}")
 
+    start_epoch = 0
     if args.finetune:
         if accelerator.is_main_process:
             logger.info("Loading checkpoint...")
         net.load_state_dict(torch.load(args.finetune)["model_state_dict"])
+        start_epoch = torch.load(args.finetune)["epoch"] + 1
 
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=0.0)
 
@@ -387,14 +389,22 @@ if __name__ == "__main__":
     net, optimizer, ssloader = accelerator.prepare(net, optimizer, ssloader)
 
     scheduler = LinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters)
+    if args.finetune:
+        if accelerator.is_main_process:
+            logger.info("Loading scheduler...")
+        if "scheduler_state_dict" in torch.load(args.finetune):
+            scheduler.load_state_dict(torch.load(args.finetune)["scheduler_state_dict"])
+        elif args.warmup_iters != 0:
+            raise ValueError('Cannot load scheduler!')
 
-    for epoch in range(0, args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         total_loss = train(net, ema, optimizer, scheduler, ssloader, epoch)
         if (epoch + 1) % args.checkpoint_every == 0:
             if accelerator.is_main_process:
                 save_checkpoint(
                     accelerator.unwrap_model(net),
                     optimizer,
+                    scheduler,
                     epoch,
                     total_loss,
                     checkpoint_dir=jobdir,

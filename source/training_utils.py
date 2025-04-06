@@ -27,7 +27,7 @@ def save_model(model, epoch, checkpoint_dir, prefix="checkpoint"):
 
 
 def save_checkpoint(
-    model, optimizer, epoch, loss, checkpoint_dir, max_checkpoints=None
+    model, optimizer, scheduler, epoch, loss, checkpoint_dir, max_checkpoints=None,
 ):
 
     if not os.path.exists(checkpoint_dir):
@@ -40,6 +40,7 @@ def save_checkpoint(
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
             "loss": loss,
         },
         checkpoint_path,
