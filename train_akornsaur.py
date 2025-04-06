@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 
 import torch
@@ -62,7 +63,7 @@ if __name__ == '__main__':
         default=None,
         help="optional. you can specify the dir path if the default path of each dataset is not appropritate one. Currently only applied to ImageNet",
     )
-    parser.add_argument("--batchsize", type=int, default=250)
+    parser.add_argument("--batchsize", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
         "--data_imsize",
@@ -221,6 +222,7 @@ if __name__ == '__main__':
                    config=vars(args),)
 
     global_step = 0
+    best_val_loss = math.inf
     for epoch in range(args.epochs):
         akornsaur.train(True)
         epoch_loss = 0
@@ -248,13 +250,13 @@ if __name__ == '__main__':
             epoch_loss += loss
             record = {}
             record['global_step'] = global_step
-            record['train/step_loss'] = loss / args.batchsize
+            record['train/step_loss'] = loss
             record['train/grad_norm'] = grad_norm.item()
             record.update({f'lr_{k}': lr for k, lr in enumerate(scheduler.get_lr())})
 
             if i == n_batches - 1:
                 record['global_step'] = global_step
-                record['train/epoch_loss'] = epoch_loss / n_batches / args.batchsize
+                record['train/epoch_loss'] = epoch_loss / n_batches
 
             train_pbar.set_postfix(record, refresh=False)
             if i == n_batches - 1 or global_step % args.log_every_n_steps == 0:
@@ -304,13 +306,14 @@ if __name__ == '__main__':
             else:
                 loss, aux_output = akornsaur.step(images, do_predict_masks=False)
 
-            val_loss += loss.item()
+            val_loss += loss.item() * images.size()[0]
             if do_need_log_ari:
                 gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
                 ari_slot_attention.update(gt_masks, aux_output["slot_attention_masks_hard"])
                 ari_decoder.update(gt_masks, aux_output["decoder_masks_hard"])
             if i == val_n_batches - 1:
-                record['val/loss'] = val_loss / k
+                val_loss /= k
+                record['val/loss'] = val_loss
                 if do_need_log_ari:
                     record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
                     record['val/ari_decoder'] = ari_decoder.compute().item()
@@ -322,7 +325,16 @@ if __name__ == '__main__':
 
         if epoch % args.save_every_n_epochs == 0:
             checkpoint = {'model': akornsaur.state_dict(), 'optimizer': optimizer.state_dict(),
-                          'global_step': global_step, 'epoch': epoch,}
+                          'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
             checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
             os.makedirs(checkpoint_folder, exist_ok=True)
             torch.save(checkpoint, os.path.join(checkpoint_folder, 'checkpoint.pt'))
+
+        if val_loss <= best_val_loss:
+            best_val_loss = val_loss
+            checkpoint = {'model': akornsaur.state_dict(), 'optimizer': optimizer.state_dict(),
+                          'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
+            checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
+            os.makedirs(checkpoint_folder, exist_ok=True)
+            torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
+
