@@ -7,11 +7,12 @@ from torch import nn
 class RandomInit(nn.Module):
     """Sampled random initialization for all slots."""
 
-    def __init__(self, n_slots: int, dim: int, initial_std: Optional[float] = None):
+    def __init__(self, n_slots: int, dim: int, initial_std: Optional[float] = None, per_slot_initialization=False):
         super().__init__()
         self.n_slots = n_slots
         self.dim = dim
-        self.mean = nn.Parameter(torch.zeros(1, 1, dim))
+        self.per_slot_initialization = per_slot_initialization
+        self.mean = nn.Parameter(torch.zeros(1, n_slots if per_slot_initialization else 1, dim))
         if initial_std is None:
             initial_std = dim**-0.5
         self.log_std = nn.Parameter(torch.log(torch.ones(1, 1, dim) * initial_std))

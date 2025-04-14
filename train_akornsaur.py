@@ -134,6 +134,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('--num_slots', type=int, default=11)
     parser.add_argument('--slot_size', type=int, default=256)
+    parser.add_argument('--per_slot_initialization', type=str2bool, default=False)
     parser.add_argument("--lr", type=float, default=0.0004)
     parser.add_argument('--warmup_iters', type=int, default=10000)
     parser.add_argument('--decay_steps', type=int, default=100000)
@@ -196,7 +197,7 @@ if __name__ == '__main__':
         hidden_dims=[2 * 256],
         initial_layer_norm=True,)
 
-    initializer = RandomInit(n_slots=args.num_slots, dim=args.slot_size)
+    initializer = RandomInit(n_slots=args.num_slots, dim=args.slot_size, per_slot_initialization=args.per_slot_initialization)
     slot_attention = SlotAttention(
         inp_dim=args.slot_size,
         slot_dim=args.slot_size,
