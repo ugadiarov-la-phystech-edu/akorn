@@ -299,7 +299,7 @@ if __name__ == "__main__":
             add_gradient_histograms(writer, net, epoch)
             for name, param in net.named_parameters():
                 diff = param - initial_params[name]
-                writer.add_histogram(f"{name}_diff", diff, epoch)
+                writer.add_histogram(f"hist/{name}_diff", diff, epoch)
         if accelerator.is_main_process:
             logger.info(
                 f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss/n:.3f}"
@@ -308,6 +308,8 @@ if __name__ == "__main__":
         total_loss = running_loss / n
         if accelerator.is_main_process:
             writer.add_scalar("training loss", total_loss, epoch)
+            for k, lr in enumerate(scheduler.get_lr()):
+                writer.add_scalar(f'lr_{k}', lr, epoch)
 
         return total_loss
 
