@@ -8,7 +8,8 @@ import torch.nn as nn
 from torch import optim
 
 from source.gen_image import get_image
-from source.training_utils import save_checkpoint, save_model, LinearWarmupScheduler, add_gradient_histograms
+from source.training_utils import save_checkpoint, save_model, add_gradient_histograms, \
+    ExpDecayWithLinearWarmupScheduler
 from source.data.datasets.objs.load_data import load_data
 
 from source.utils import str2bool
@@ -86,7 +87,9 @@ if __name__ == "__main__":
         help="save checkpoint every specified epochs",
     )
     parser.add_argument("--lr", type=float, default=1e-3, help="lr")
-    parser.add_argument("--warmup_iters", type=int, default=0)
+    parser.add_argument('--warmup_iters', type=int, default=0)
+    parser.add_argument('--decay_steps', type=int, default=100000)
+    parser.add_argument('--decay_rate', type=float, default=0.5)
     parser.add_argument(
         "--finetune",
         type=str,
@@ -388,7 +391,8 @@ if __name__ == "__main__":
 
     net, optimizer, ssloader = accelerator.prepare(net, optimizer, ssloader)
 
-    scheduler = LinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters)
+    scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
+                                                  decay_steps=args.decay_steps, decay_rate=args.decay_rate)
     if args.finetune:
         if accelerator.is_main_process:
             logger.info("Loading scheduler...")
