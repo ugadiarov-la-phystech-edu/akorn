@@ -162,8 +162,10 @@ if __name__ == '__main__':
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.enable_flash_sdp(enabled=True)
 
+    if args.model_imsize % 8 != 0:
+        raise ValueError('Image size:', args.model_imsize, 'Patch size:', 8)
 
-    n_patches = (128 // 8) ** 2
+    n_patches = (args.model_imsize // 8) ** 2
 
     encoder = AKOrN(
         args.N,
