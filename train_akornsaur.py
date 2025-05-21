@@ -194,7 +194,7 @@ if __name__ == '__main__':
     encoder.requires_grad_(False)
 
     features_projector = MLP(
-        inp_dim=256,
+        inp_dim=args.ch,
         outp_dim=args.slot_size,
         hidden_dims=[2 * 256],
         initial_layer_norm=True,)
@@ -206,7 +206,7 @@ if __name__ == '__main__':
         n_iters=3,
         use_mlp=True,)
 
-    decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=256, hidden_dims=[512, 512, 512], n_patches=n_patches)
+    decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=args.ch, hidden_dims=[512, 512, 512], n_patches=n_patches)
     akornsaur = AkornSAur(encoder, features_projector, initializer, slot_attention, decoder, is_encoder_frozen=True).to('cuda')
     optimizer = torch.optim.Adam(akornsaur.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
