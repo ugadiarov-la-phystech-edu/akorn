@@ -157,6 +157,7 @@ if __name__ == '__main__':
         "--wandb_run_name", type=str, required=False,
     )
     parser.add_argument("--image_file_extension", type=str, required=False)
+    parser.add_argument("--from_checkpoint", type=str, required=False)
 
     args = parser.parse_args()
     torch.backends.cudnn.benchmark = True
@@ -211,6 +212,9 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(akornsaur.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
+    if args.from_checkpoint is not None:
+        sd = torch.load(args.from_checkpoint)
+        akornsaur.load_state_dict(torch.load(args.from_checkpoint)['model'])
 
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
                                      num_workers=args.num_workers, is_eval=False,
