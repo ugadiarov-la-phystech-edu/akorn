@@ -304,7 +304,7 @@ if __name__ == '__main__':
             do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
             do_need_visualize = epoch % args.visualize_every_n_epochs == 0
             if (i == 0 and do_need_visualize) or do_need_log_ari:
-                output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
+                output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True, masks=True)
                 vis_images = images[:args.visualize_n_images]
                 slot_attention_masks = output["slot_attention_masks_hard_sequence"][:args.visualize_n_images]
                 decoder_masks = output["decoder_masks_hard_sequence"][:args.visualize_n_images]
@@ -323,6 +323,7 @@ if __name__ == '__main__':
                                                    output["slot_attention_masks_sequence"][:args.visualize_n_images])
                 visualizations['slot_attention_masks_hard'] = grid(vis_images,
                                                         output["slot_attention_masks_hard_sequence"][:args.visualize_n_images])
+                del slot_attention_masks, decoder_masks
             else:
                 output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
 

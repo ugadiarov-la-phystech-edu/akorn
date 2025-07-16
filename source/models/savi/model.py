@@ -54,7 +54,7 @@ class AkornSAVi(nn.Module):
 
         return masks_resized, masks_resized_hard
 
-    def forward(self, images: torch.Tensor, actions: torch.Tensor, prior_slots=None, step_offset=0, reconstruct=True, **kwargs):
+    def forward(self, images: torch.Tensor, actions: torch.Tensor, prior_slots=None, step_offset=0, reconstruct=False, masks=False, **kwargs):
         """
         Args:
             images (torch.Tensor): Image sequence of shape (B, sequence_length, C, H, W).
@@ -88,22 +88,26 @@ class AkornSAVi(nn.Module):
                 predicted_slots = self.predictor(slots, actions[:, t])
 
             slots_sequence.append(slots)
-            if reconstruct:
+            if reconstruct or masks:
                 decoder_output = self.decoder(slots)
-                slot_attention_masks_sequence.append(slot_attention_output['masks'])
-                decoder_masks_sequence.append(decoder_output['masks'])
-                features_sequence.append(img_feats)
-                features_reconstruction_sequence.append(decoder_output['reconstruction'].movedim(2, 1).reshape_as(img_feats))
+                if reconstruct:
+                    features_sequence.append(img_feats)
+                    features_reconstruction_sequence.append(decoder_output['reconstruction'].movedim(2, 1).reshape_as(img_feats))
+                if masks:
+                    slot_attention_masks_sequence.append(slot_attention_output['masks'])
+                    decoder_masks_sequence.append(decoder_output['masks'])
+
 
         result = {'slots_sequence': torch.stack(slots_sequence, dim=1)}
         if reconstruct:
+            result['features_sequence'] = torch.stack(features_sequence, dim=1)
+            result['features_reconstruction_sequence'] = torch.stack(features_reconstruction_sequence, dim=1)
+
+        if masks:
             slot_attention_masks_sequence = torch.stack(slot_attention_masks_sequence, dim=1)
             slot_attention_masks_sequence, slot_attention_masks_hard_sequence = self.process_masks(slot_attention_masks_sequence, images, )
             decoder_masks_sequence = torch.stack(decoder_masks_sequence, dim=1)
             decoder_masks_sequence, decoder_masks_hard_sequence = self.process_masks(decoder_masks_sequence, images, )
-
-            result['features_sequence'] = torch.stack(features_sequence, dim=1)
-            result['features_reconstruction_sequence'] = torch.stack(features_reconstruction_sequence, dim=1)
             result['slot_attention_masks_sequence'] = slot_attention_masks_sequence
             result['slot_attention_masks_hard_sequence'] = slot_attention_masks_hard_sequence
             result['decoder_masks_sequence'] = decoder_masks_sequence
