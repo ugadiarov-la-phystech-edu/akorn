@@ -1,6 +1,6 @@
-import argparse
 import time
 
+import numpy as np
 from torch.utils.data import Dataset
 import glob
 import os
@@ -15,10 +15,17 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class EpisodesDataset(Dataset):
-    def __init__(self, root, mode, res=128, extension='png', return_tensor=True,):
+    def __init__(self, root, mode, res=128, extension='png', return_tensor=True, kind='image', sequence_length=1):
         assert mode in ['train', 'val', 'valid', 'test']
         if mode in ('valid', 'test'):
             mode = 'val'
+
+        assert kind in ('image', 'video'), f'Expected kind: image or video. Actual: {kind}'
+        if kind == 'image':
+            assert sequence_length == 1, f'Expected sequence length: 1. Actual: {sequence_length}'
+
+        self.kind = kind
+        self.sequence_length = sequence_length
 
         root = os.path.join(root, mode)
         root_with_obs = os.path.join(root, 'obs')
@@ -65,20 +72,42 @@ class EpisodesDataset(Dataset):
         print(f'Dataset indexing took {time.time() - start} seconds')
 
     def __getitem__(self, index):
-        ep = self.index2episode[index]
-        # Implement continuous indexing
-        offset = self.episode2offset[ep]
-        in_episode_index = index - offset
-        img = Image.open(self.episode_images[ep][in_episode_index])
-        img = img.resize((self.res, self.res))
+        if self.kind == 'video':
+            episode_images = self.episode_images[index]
+            start_index = np.random.randint(0, len(episode_images) - self.sequence_length + 1)
 
-        if self.return_tensor:
-            return self.to_tensor(img)
+            image_sequence = []
+            for image_index in range(start_index, start_index + self.sequence_length):
+                img = Image.open(episode_images[image_index])
+                img = img.resize((self.res, self.res))
+                image_sequence.append(img)
 
-        return img
+            if self.return_tensor:
+                return torch.stack([self.to_tensor(img) for img in image_sequence], dim=0)
+
+            return image_sequence
+        elif self.kind == 'image':
+            ep = self.index2episode[index]
+            # Implement continuous indexing
+            offset = self.episode2offset[ep]
+            in_episode_index = index - offset
+            img = Image.open(self.episode_images[ep][in_episode_index])
+            img = img.resize((self.res, self.res))
+
+            if self.return_tensor:
+                return self.to_tensor(img)
+
+            return img
+        else:
+            assert False, 'Cannot happen!'
 
     def __len__(self):
-        return len(self.index2episode)
+        if self.kind == 'image':
+            return len(self.index2episode)
+        elif self.kind == 'video':
+            return len(self.episode_images)
+        else:
+            assert False, 'Cannot happen!'
 
 
 class AugmentedPairEpisodeDataset(EpisodesDataset):

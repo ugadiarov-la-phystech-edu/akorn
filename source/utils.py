@@ -161,9 +161,19 @@ def to_one_hot(tsr, num_classes=-1):
 
 
 def vis_mask(images, masks):
-    images = images.unsqueeze(1)
-    masks = masks.unsqueeze(2)
-    return torch.cat([images, images * masks + (1 - masks)], dim=1)
+    # images.shape -> ..., n_channels, h, w
+    images = images.unsqueeze(-4)
+    # masks.shape -> ..., n_slots, h, w
+    masks = masks.unsqueeze(-3)
+    return torch.cat([images, images * masks + (1 - masks)], dim=-4)
+
+
+def grid(images, masks):
+    attention_maps = vis_mask(images, masks)
+    # attention_maps.shape -> ..., n_slots, n_channels, h, w
+    log_image = attention_maps.flatten(end_dim=-4)
+    log_image = make_grid(log_image, attention_maps.shape[-4], pad_value=0.5).movedim(0, -1).cpu().numpy()
+    return log_image
 
 
 def grid_numpy(images, gt_masks, decoder_masks, slot_attention_masks):
@@ -178,8 +188,9 @@ def grid_numpy(images, gt_masks, decoder_masks, slot_attention_masks):
     log_image.append(attn_decoder)
 
     log_image = torch.stack(log_image, dim=1)
-    log_image = log_image.flatten(end_dim=2)
-    log_image = make_grid(log_image, nrow=attn_decoder.size()[1], pad_value=0.5).movedim(0, -1).cpu().numpy()
+    # log_image.shape -> ..., n_slots, n_channels, h, w
+    log_image = log_image.flatten(end_dim=-4)
+    log_image = make_grid(log_image, nrow=attn_decoder.size()[-4], pad_value=0.5).movedim(0, -1).cpu().numpy()
 
     return log_image
 

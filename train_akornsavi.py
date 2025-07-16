@@ -8,25 +8,26 @@ from ema_pytorch import EMA
 from tqdm import tqdm
 
 from source.models.objs.knet import AKOrN
+from source.models.savi import Learned, TransformerPredictor
+from source.models.savi.model import AkornSAVi
 from source.models.slot_attention.akornsaur import AkornSAur
 from source.models.slot_attention.decoders import MLPDecoder
 from source.models.slot_attention.initializers import RandomInit
 from source.models.slot_attention.networks import MLP
 from source.models.slot_attention.slot_attention import SlotAttention
 from source.training_utils import ExpDecayWithLinearWarmupScheduler
-from source.utils import str2bool, to_one_hot, grid_numpy, AdjustedRandIndex
-
+from source.utils import str2bool, to_one_hot, grid_numpy, AdjustedRandIndex, grid
 
 TQDM_MIN_INTERVAL = 5
 DEVICE = 'cuda'
 
 
 def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False,
-               image_file_extension=None):
+               image_file_extension=None, kind='image', sequence_length=1):
     from source.data.datasets.objs.load_data import load_data
 
-    dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind='image',
-                                            image_file_extension=image_file_extension)
+    dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind=kind,
+                                            image_file_extension=image_file_extension, sequence_length=sequence_length)
 
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
     if data in ("clevrtex_full", "clevrtex_outd", "clevrtex_camo", "coco"):
@@ -37,7 +38,7 @@ def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=
 
 
 def maybe_log_wandb(record, wandb_project, wandb_group, wandb_run_name, path=None):
-    if len(record) == 0 or wandb_project is None:
+    if len(record) == 0 or wandb_project is None or len(wandb_project) == 0:
         return
 
     if wandb.run is None:
@@ -64,6 +65,7 @@ if __name__ == '__main__':
         help="optional. you can specify the dir path if the default path of each dataset is not appropritate one. Currently only applied to ImageNet",
     )
     parser.add_argument("--batchsize", type=int, default=256)
+    parser.add_argument("--sequence_length", type=int, default=8)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
         "--data_imsize",
@@ -200,30 +202,31 @@ if __name__ == '__main__':
         hidden_dims=[2 * 256],
         initial_layer_norm=True,)
 
-    initializer = RandomInit(n_slots=args.num_slots, dim=args.slot_size, per_slot_initialization=args.per_slot_initialization)
+    initializer = Learned(num_slots=args.num_slots, slot_dim=args.slot_size)
     slot_attention = SlotAttention(
         inp_dim=args.slot_size,
         slot_dim=args.slot_size,
         n_initial_iters=3,
-        n_iters=3,
+        n_iters=1,
         use_mlp=True,)
 
     decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=args.ch, hidden_dims=[512, 512, 512], n_patches=n_patches)
-    akornsaur = AkornSAur(encoder, features_projector, initializer, slot_attention, decoder, is_encoder_frozen=True).to('cuda')
-    optimizer = torch.optim.Adam(akornsaur.parameters(), lr=args.lr)
+    predictor = TransformerPredictor(slot_dim=args.slot_size, action_dim=-1,)
+    akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, is_encoder_frozen=True).to('cuda')
+    optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
     if args.from_checkpoint is not None:
         sd = torch.load(args.from_checkpoint)
-        akornsaur.load_state_dict(torch.load(args.from_checkpoint)['model'])
+        akornsavi.load_state_dict(torch.load(args.from_checkpoint)['model'])
 
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
-                                     num_workers=args.num_workers, is_eval=False,
-                                     image_file_extension=args.image_file_extension)
+                                     num_workers=args.num_workers, is_eval=False, kind='video',
+                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,)
     val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=False,
-                                     num_workers=args.num_workers, is_eval=True,
-                                     image_file_extension=args.image_file_extension)
-    if args.wandb_project is not None:
+                                     num_workers=args.num_workers, is_eval=True, kind='video',
+                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,)
+    if args.wandb_project is not None and len(args.wandb_project) > 0:
         path = os.path.join('wandb', args.wandb_run_name)
         os.makedirs(path, exist_ok=True)
         wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name, dir=path,
@@ -232,7 +235,7 @@ if __name__ == '__main__':
     global_step = 0
     best_val_loss = math.inf
     for epoch in range(args.epochs):
-        akornsaur.train(True)
+        akornsavi.train(True)
         epoch_loss = 0
         n_batches = len(train_dataloader)
         train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
@@ -245,12 +248,13 @@ if __name__ == '__main__':
 
             images = images.to('cuda')
             global_step += 1
-            loss, aux_output = akornsaur.step(images, do_predict_masks=False)
+            output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
 
             optimizer.zero_grad()
+            loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
             loss.backward()
 
-            grad_norm = torch.nn.utils.clip_grad_norm_(akornsaur.parameters(), args.grad_norm_clip)
+            grad_norm = torch.nn.utils.clip_grad_norm_(akornsavi.parameters(), args.grad_norm_clip)
             optimizer.step()
             scheduler.step()
 
@@ -276,8 +280,8 @@ if __name__ == '__main__':
         val_loss = 0
         k = 0
         val_n_batches = len(val_dataloader)
-        akornsaur.train(False)
-        vis_grid = None
+        akornsavi.train(False)
+        visualizations = {}
         record = {'global_step': global_step, 'epoch': epoch}
         ari_slot_attention = AdjustedRandIndex(ignore_background=True, ignore_overlaps=False)
         ari_decoder = AdjustedRandIndex(ignore_background=True, ignore_overlaps=False)
@@ -300,25 +304,34 @@ if __name__ == '__main__':
             do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
             do_need_visualize = epoch % args.visualize_every_n_epochs == 0
             if (i == 0 and do_need_visualize) or do_need_log_ari:
-                loss, aux_output = akornsaur.step(images, do_predict_masks=True)
+                output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
                 vis_images = images[:args.visualize_n_images]
-                slot_attention_masks = aux_output["slot_attention_masks_hard"][:args.visualize_n_images]
-                decoder_masks = aux_output["decoder_masks_hard"][:args.visualize_n_images]
+                slot_attention_masks = output["slot_attention_masks_hard_sequence"][:args.visualize_n_images]
+                decoder_masks = output["decoder_masks_hard_sequence"][:args.visualize_n_images]
                 if has_gt_masks:
                     vis_gt_masks = gt_masks[:args.visualize_n_images].to(torch.int64).squeeze(1)
                     vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=args.num_slots)
+                    visualizations['ground_truth'] = grid(vis_images, vis_gt_masks)
                 else:
                     vis_gt_masks = None
 
-                vis_grid = grid_numpy(vis_images, vis_gt_masks, decoder_masks, slot_attention_masks)
+                visualizations['decoder_masks'] = grid(vis_images,
+                                                   output["decoder_masks_sequence"][:args.visualize_n_images])
+                visualizations['decoder_masks_hard'] = grid(vis_images,
+                                                   output["decoder_masks_hard_sequence"][:args.visualize_n_images])
+                visualizations['slot_attention_masks'] = grid(vis_images,
+                                                   output["slot_attention_masks_sequence"][:args.visualize_n_images])
+                visualizations['slot_attention_masks_hard'] = grid(vis_images,
+                                                        output["slot_attention_masks_hard_sequence"][:args.visualize_n_images])
             else:
-                loss, aux_output = akornsaur.step(images, do_predict_masks=False)
+                output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
 
+            loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
             val_loss += loss.item() * images.size()[0]
             if do_need_log_ari:
                 gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
-                ari_slot_attention.update(gt_masks, aux_output["slot_attention_masks_hard"])
-                ari_decoder.update(gt_masks, aux_output["decoder_masks_hard"])
+                ari_slot_attention.update(gt_masks, output["slot_attention_masks_hard_sequence"])
+                ari_decoder.update(gt_masks, output["decoder_masks_hard_sequence"])
             if i == val_n_batches - 1:
                 val_loss /= k
                 record['val/loss'] = val_loss
@@ -328,11 +341,12 @@ if __name__ == '__main__':
                 val_pbar.set_postfix(record)
 
         val_pbar.close()
-        record['val/visualization'] = wandb.Image(vis_grid)
-        maybe_log_wandb(record, args.wandb_project, args.wandb_group, args.wandb_run_name)
+        for key, visualization in visualizations.items():
+            record[f'val/{key}'] = wandb.Image(visualization)
 
+        maybe_log_wandb(record, args.wandb_project, args.wandb_group, args.wandb_run_name)
         if epoch % args.save_every_n_epochs == 0:
-            checkpoint = {'model': akornsaur.state_dict(), 'optimizer': optimizer.state_dict(),
+            checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
                           'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
             checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
             os.makedirs(checkpoint_folder, exist_ok=True)
@@ -340,7 +354,7 @@ if __name__ == '__main__':
 
         if val_loss <= best_val_loss:
             best_val_loss = val_loss
-            checkpoint = {'model': akornsaur.state_dict(), 'optimizer': optimizer.state_dict(),
+            checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
                           'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
             checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
             os.makedirs(checkpoint_folder, exist_ok=True)
