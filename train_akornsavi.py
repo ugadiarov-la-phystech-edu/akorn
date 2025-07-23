@@ -3,7 +3,9 @@ import math
 import os
 
 import torch
-import wandb
+from comet_ml import CometExperiment
+
+import comet_ml
 from ema_pytorch import EMA
 from tqdm import tqdm
 
@@ -34,17 +36,14 @@ def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=
     return loader, imsize
 
 
-def maybe_log_wandb(record, wandb_project, wandb_group, wandb_run_name, path=None):
-    if len(record) == 0 or wandb_project is None or len(wandb_project) == 0:
+def maybe_log_wandb(experiment: CometExperiment, step, record, visualizations_dict=None):
+    if experiment is None:
         return
 
-    if wandb.run is None:
-        if path is None:
-            path = os.path.join('wandb', wandb_run_name)
-
-        wandb.init(project=wandb_project, group=wandb_group, name=wandb_run_name, dir=path, config=vars(args),)
-
-    wandb.log(record)
+    experiment.log_metrics(record, step=step)
+    if visualizations_dict is not None:
+        for key, visualization in visualizations_dict.items():
+            experiment.log_image(visualization, name=key, step=step)
 
 
 if __name__ == '__main__':
@@ -225,11 +224,12 @@ if __name__ == '__main__':
     val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=False,
                                      num_workers=args.num_workers, is_eval=True, kind='video',
                                      image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,)
+
+    experiment: CometExperiment = None
     if args.wandb_project is not None and len(args.wandb_project) > 0:
-        path = os.path.join('wandb', args.wandb_run_name)
-        os.makedirs(path, exist_ok=True)
-        wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name, dir=path,
-                   config=vars(args),)
+        experiment = comet_ml.start(project_name=args.wandb_project,)
+        experiment.add_tag(args.wandb_run_name)
+        experiment.set_name(args.wandb_run_name)
 
     global_step = 0
     best_val_loss = math.inf
@@ -271,7 +271,7 @@ if __name__ == '__main__':
 
             train_pbar.set_postfix(record, refresh=False)
             if i == n_batches - 1 or global_step % args.log_every_n_steps == 0:
-                maybe_log_wandb(record, args.wandb_project, args.wandb_group, args.wandb_run_name)
+                maybe_log_wandb(experiment, global_step, record)
 
         train_pbar.close()
 
@@ -341,10 +341,8 @@ if __name__ == '__main__':
                 val_pbar.set_postfix(record)
 
         val_pbar.close()
-        for key, visualization in visualizations.items():
-            record[f'val/{key}'] = wandb.Image(visualization)
 
-        maybe_log_wandb(record, args.wandb_project, args.wandb_group, args.wandb_run_name)
+        maybe_log_wandb(experiment, global_step, record, visualizations)
         if epoch % args.save_every_n_epochs == 0:
             checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
                           'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
@@ -359,4 +357,3 @@ if __name__ == '__main__':
             checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
             os.makedirs(checkpoint_folder, exist_ok=True)
             torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
-
