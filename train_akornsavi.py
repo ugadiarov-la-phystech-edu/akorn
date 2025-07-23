@@ -8,15 +8,12 @@ from ema_pytorch import EMA
 from tqdm import tqdm
 
 from source.models.objs.knet import AKOrN
-from source.models.savi import Learned, TransformerPredictor
+from source.models.savi import Learned, TransformerPredictor, Corrector
 from source.models.savi.model import AkornSAVi
-from source.models.slot_attention.akornsaur import AkornSAur
 from source.models.slot_attention.decoders import MLPDecoder
-from source.models.slot_attention.initializers import RandomInit
 from source.models.slot_attention.networks import MLP
-from source.models.slot_attention.slot_attention import SlotAttention
 from source.training_utils import ExpDecayWithLinearWarmupScheduler
-from source.utils import str2bool, to_one_hot, grid_numpy, AdjustedRandIndex, grid
+from source.utils import str2bool, to_one_hot, AdjustedRandIndex, grid
 
 TQDM_MIN_INTERVAL = 5
 DEVICE = 'cuda'
@@ -43,9 +40,9 @@ def maybe_log_wandb(record, wandb_project, wandb_group, wandb_run_name, path=Non
 
     if wandb.run is None:
         if path is None:
-            path = os.path.join('wandb', args.wandb_run_name)
+            path = os.path.join('wandb', wandb_run_name)
 
-        wandb.init(project=args.wandb_project, group=wandb_group, name=wandb_run_name, dir=path, config=vars(args),)
+        wandb.init(project=wandb_project, group=wandb_group, name=wandb_run_name, dir=path, config=vars(args),)
 
     wandb.log(record)
 
@@ -203,12 +200,14 @@ if __name__ == '__main__':
         initial_layer_norm=True,)
 
     initializer = Learned(num_slots=args.num_slots, slot_dim=args.slot_size)
-    slot_attention = SlotAttention(
-        inp_dim=args.slot_size,
+    slot_attention = Corrector(
+        num_slots=args.num_slots,
         slot_dim=args.slot_size,
-        n_initial_iters=3,
-        n_iters=1,
-        use_mlp=True,)
+        feature_dim=args.slot_size,
+        num_iterations=1,
+        num_initial_iterations=3,
+        hidden_dim=4 * args.slot_size,
+    )
 
     decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=args.ch, hidden_dims=[512, 512, 512], n_patches=n_patches)
     predictor = TransformerPredictor(slot_dim=args.slot_size, action_dim=-1,)
