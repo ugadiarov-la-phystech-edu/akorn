@@ -216,7 +216,7 @@ if __name__ == '__main__':
     video_akornsaur = VideoAkornSAur(
         encoder=encoder, encoder_output_transform=encoder_output_transform, initializer=initializer, decoder=decoder,
         latent_processor=latent_processor, feature_time_similarity=feature_time_similarity, is_encoder_frozen=True,
-    ).to('cuda')
+    ).to(DEVICE)
 
     optimizer = torch.optim.Adam(video_akornsaur.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
@@ -237,6 +237,7 @@ if __name__ == '__main__':
         experiment = comet_ml.start(project_name=args.wandb_project,)
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
+        experiment.log_parameters(vars(args))
 
     global_step = 0
     best_val_loss = math.inf
@@ -252,7 +253,7 @@ if __name__ == '__main__':
             else:
                 images = batch
 
-            images = images.to('cuda')
+            images = images.to(DEVICE)
             global_step += 1
             output = video_akornsaur(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
             optimizer.zero_grad()
