@@ -139,6 +139,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--loss_coefficient", type=float, default=0.1)
     parser.add_argument("--similarity_temperature", type=float, default=0.075)
+    parser.add_argument("--similarity_target", choices=['features', 'attention_keys', 'similarity', 'attention_queries', 'attention_values'], default='features')
     parser.add_argument('--warmup_iters', type=int, default=10000)
     parser.add_argument('--decay_steps', type=int, default=100000)
     parser.add_argument('--decay_rate', type=float, default=0.5)
@@ -216,6 +217,7 @@ if __name__ == '__main__':
     video_akornsaur = VideoAkornSAur(
         encoder=encoder, encoder_output_transform=encoder_output_transform, initializer=initializer, decoder=decoder,
         latent_processor=latent_processor, feature_time_similarity=feature_time_similarity, is_encoder_frozen=True,
+        similarity_target=args.similarity_target,
     ).to(DEVICE)
 
     optimizer = torch.optim.Adam(video_akornsaur.parameters(), lr=args.lr)

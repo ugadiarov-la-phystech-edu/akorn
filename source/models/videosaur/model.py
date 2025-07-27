@@ -6,7 +6,7 @@ from ..slot_attention.resizer import Resizer, SoftToHardMask
 
 class VideoAkornSAur(nn.Module):
     def __init__(self, encoder: nn.Module, encoder_output_transform: nn.Module, initializer: nn.Module,
-                 decoder: nn.Module, latent_processor: nn.Module, feature_time_similarity,
+                 decoder: nn.Module, latent_processor: nn.Module, feature_time_similarity, similarity_target,
                  is_encoder_frozen: bool = True) -> None:
         super().__init__()
         self.encoder = encoder
@@ -15,6 +15,7 @@ class VideoAkornSAur(nn.Module):
         self.decoder = decoder
         self.latent_processor = latent_processor
         self.feature_time_similarity = feature_time_similarity
+        self.similarity_target = similarity_target
         self.is_encoder_frozen = is_encoder_frozen
         self.encoder = self.encoder.train(not self.is_encoder_frozen)
         self.encoder.requires_grad_(not self.is_encoder_frozen)
@@ -29,9 +30,13 @@ class VideoAkornSAur(nn.Module):
         return self
 
     def _get_features(self, images: torch.Tensor,):
-
         # features.shape -> batch_size, encoder_dim, n_patches_h, n_patches_w
-        features = self.encoder(images, return_activation=True)
+        if self.similarity_target == 'features':
+            features = self.encoder(images, return_activation=True)
+            similarity_features = features
+        else:
+            features, similarity_features = self.encoder(images, return_activation=True, last_layer_similarity_features=self.similarity_target)
+            similarity_features = similarity_features[-1]
 
         # x.shape -> batch_size, n_patches_h x n_patches_w, encoder_dim
         x = features.flatten(start_dim=2).movedim(2, 1)
@@ -39,7 +44,7 @@ class VideoAkornSAur(nn.Module):
         # x.shape -> batch_size, n_patches_h x n_patches_w, projection_dim
         slot_attention_input = self.encoder_output_transform(x)
 
-        return x, slot_attention_input
+        return similarity_features.flatten(start_dim=2).movedim(2, 1), slot_attention_input
 
     def process_masks(
         self,

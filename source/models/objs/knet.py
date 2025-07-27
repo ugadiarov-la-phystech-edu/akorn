@@ -140,7 +140,7 @@ class AKOrN(nn.Module):
         self.fixed_ptb = False
         self.autorescale = autorescale
 
-    def feature(self, inp):
+    def feature(self, inp, last_layer_similarity_features=None):
         if self.autorescale and (
             inp.shape[2] != self.imsize or inp.shape[3] != self.imsize
         ):
@@ -162,20 +162,28 @@ class AKOrN(nn.Module):
             x = x + self.pemb_x[None]
         xs = [x]
         es = [torch.zeros(x.shape[0], device=x.device)]
+        similarity_features = None
         for l, (kblock, ro, lin_x) in enumerate(self.layers):
-            _xs, _es = kblock(x, c, T=self.T[l], gamma=self.gamma)
+            return_similarity_features = None
+            if l == self.L - 1:
+                return_similarity_features = last_layer_similarity_features
+
+            _xs, _es, similarity_features = kblock(x, c, T=self.T[l], gamma=self.gamma, return_similarity_features=return_similarity_features)
             x = _xs[-1]
             c = ro(x)
             x = lin_x(x)
             xs.append(_xs)
             es.append(_es)
 
-        return c, x, xs, es
+        return c, x, xs, es, similarity_features
 
-    def forward(self, input, return_xs=False, return_es=False, return_activation=False):
-        c, x, xs, es = self.feature(input)
+    def forward(self, input, return_xs=False, return_es=False, return_activation=False, last_layer_similarity_features=None):
+        c, x, xs, es, similarity_features = self.feature(input, last_layer_similarity_features=last_layer_similarity_features)
         if return_activation:
-            return c
+            if last_layer_similarity_features is None:
+                return c
+
+            return c, similarity_features
 
         c = self.out(c)
 

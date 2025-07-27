@@ -125,7 +125,7 @@ class KLayer(nn.Module):  # Kuramoto layer
 
     def kupdate(self, x: torch.Tensor, c: torch.Tensor = None):
         # compute  \sum_j[J_ij x_j]
-        _y = self.connectivity(x)
+        _y, attention = self.connectivity(x, return_attention=True)
         # add bias c.
         y = _y + c
 
@@ -147,19 +147,25 @@ class KLayer(nn.Module):  # Kuramoto layer
         dxdt = omg_x + reshape_back(y_yxx)
         sim = reshape_back(sim)
 
-        return dxdt, sim
+        return dxdt, sim, attention
 
-    def forward(self, x: torch.Tensor, c: torch.Tensor, T: int, gamma):
+    def forward(self, x: torch.Tensor, c: torch.Tensor, T: int, gamma, return_similarity_features=None):
         # x.shape = c.shape = [B, C,...] or [B, T, C]
         xs, es = [], []
         c = self.c_norm(c)
         x = normalize(x, self.n)
         es.append(torch.zeros(x.shape[0]).to(x.device))
+        similarity_features = []
         # Iterate kuramoto update with condition c
         for t in range(T):
-            dxdt, _sim = self.kupdate(x, c)
+            dxdt, _sim, attention = self.kupdate(x, c)
             x = normalize(x + gamma * dxdt, self.n)
             xs.append(x)
             es.append((-_sim).reshape(x.shape[0], -1).sum(-1))
+            if return_similarity_features is not None:
+                if return_similarity_features == 'similarity':
+                    similarity_features.append(_sim)
+                else:
+                    similarity_features.append(attention[return_similarity_features])
 
-        return xs, es
+        return xs, es, similarity_features

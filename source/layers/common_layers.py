@@ -340,7 +340,7 @@ class Attention(nn.Module):
             mat = einops.rearrange(mat, "(f c d) h w -> (h w) f c d", f=f, c=c, d=d)
             return mat
 
-    def forward(self, x):
+    def forward(self, x, return_attention=False):
 
         if self.weight == "conv":
             h, w = x.shape[2] // self.stride, x.shape[3] // self.stride
@@ -382,5 +382,11 @@ class Attention(nn.Module):
             x = einops.rearrange(x, "b nh k c -> b k (c nh)")
 
         x = self.W_o(x)
+        result = [x]
 
-        return x
+        if return_attention:
+            attention = {'attention_queries': q, 'attention_keys': k, 'attention_values': v}
+            attention = {key: value.movedim(-2, -1).flatten(start_dim=1, end_dim=2).unflatten(-1, (h, w)) for key, value in attention.items()}
+            result.append(attention)
+
+        return result
