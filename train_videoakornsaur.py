@@ -2,10 +2,10 @@ import argparse
 import math
 import os
 
-import torch
+import comet_ml
 from comet_ml import CometExperiment
 
-import comet_ml
+import torch
 from ema_pytorch import EMA
 from tqdm import tqdm
 
@@ -160,6 +160,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--wandb_run_name", type=str, required=False,
     )
+    parser.add_argument("--wandb_run_id", type=str, required=False)
     parser.add_argument("--image_file_extension", type=str, required=False)
     parser.add_argument("--from_checkpoint", type=str, required=False)
 
@@ -223,9 +224,23 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(video_akornsaur.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
+
+    global_step = 0
+    start_epoch = -1
+    best_val_loss = math.inf
+    val_loss = math.inf
     if args.from_checkpoint is not None:
         sd = torch.load(args.from_checkpoint)
-        video_akornsaur.load_state_dict(torch.load(args.from_checkpoint)['model'])
+        global_step = sd['global_step']
+        start_epoch = sd['epoch']
+        best_val_loss = sd['val_loss']
+        val_loss = sd['val_loss']
+
+        video_akornsaur.load_state_dict(sd['model'])
+        optimizer.load_state_dict(sd['optimizer'])
+        scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
+                                                      decay_steps=args.decay_steps, decay_rate=args.decay_rate,
+                                                      last_iter=global_step)
 
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
                                      num_workers=args.num_workers, is_eval=False, kind='video',
@@ -236,14 +251,13 @@ if __name__ == '__main__':
 
     experiment: CometExperiment = None
     if args.wandb_project is not None and len(args.wandb_project) > 0:
-        experiment = comet_ml.start(project_name=args.wandb_project,)
+        mode = 'create' if args.wandb_run_id is None else 'get'
+        experiment = comet_ml.start(project_name=args.wandb_project, experiment_key=args.wandb_run_id, mode=mode)
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
         experiment.log_parameters(vars(args))
 
-    global_step = 0
-    best_val_loss = math.inf
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch + 1, args.epochs):
         video_akornsaur.train(True)
         epoch_loss = 0
         n_batches = len(train_dataloader)
