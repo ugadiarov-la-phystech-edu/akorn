@@ -568,8 +568,10 @@ class TransformerEncoder(nn.Module):
         activation: Union[str, Callable[[torch.Tensor], torch.Tensor]] = "relu",
         hidden_dim: Optional[int] = None,
         initial_residual_scale: Optional[float] = None,
+        normalize_output: bool = False,
     ):
         super().__init__()
+        self.normalize_output = normalize_output
 
         if hidden_dim is None:
             hidden_dim = 4 * dim
@@ -605,6 +607,9 @@ class TransformerEncoder(nn.Module):
 
         for block in self.blocks:
             x = block(x, mask, key_padding_mask, memory)
+
+        if self.normalize_output:
+            x = nn.functional.normalize(x, dim=-1)
 
         return x
 

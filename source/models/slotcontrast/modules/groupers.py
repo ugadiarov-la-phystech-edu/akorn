@@ -17,6 +17,7 @@ class SlotAttention(nn.Module):
         eps: float = 1e-8,
         use_gru: bool = True,
         use_mlp: bool = True,
+        normalize_slots: bool = False,
     ):
         super().__init__()
         assert n_iters >= 1
@@ -49,6 +50,7 @@ class SlotAttention(nn.Module):
         self.n_iters = n_iters
         self.eps = eps
         self.scale = kvq_dim**-0.5
+        self.normalize_slots = normalize_slots
 
     def step(
         self, slots: torch.Tensor, keys: torch.Tensor, values: torch.Tensor
@@ -72,6 +74,9 @@ class SlotAttention(nn.Module):
 
         if self.mlp is not None:
             slots = self.mlp(slots)
+
+        if self.normalize_slots:
+            slots = nn.functional.normalize(slots, dim=-1)
 
         return slots, pre_norm_attn
 

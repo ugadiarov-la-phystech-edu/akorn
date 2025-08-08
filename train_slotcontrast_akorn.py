@@ -14,9 +14,9 @@ from source.models.slotcontrast.loss import SlotSlotContrastiveLoss
 from source.models.slotcontrast.model import SlotContrastAkornSAur
 from source.models.slotcontrast.modules.decoders import MLPDecoder
 from source.models.slotcontrast.modules.initializer import FixedLearnedInit
-from source.models.videosaur.modules.groupers import SlotAttention
-from source.models.videosaur.modules.networks import MLP, TransformerEncoder
-from source.models.videosaur.modules.video import LatentProcessor
+from source.models.slotcontrast.modules.groupers import SlotAttention
+from source.models.slotcontrast.modules.networks import MLP, TransformerEncoder
+from source.models.slotcontrast.modules.video import LatentProcessor
 from source.training_utils import ExpDecayWithLinearWarmupScheduler
 from source.utils import str2bool, to_one_hot, AdjustedRandIndex, grid
 
@@ -149,6 +149,7 @@ if __name__ == '__main__':
     parser.add_argument("--visualize_n_images", type=int, default=2)
     parser.add_argument('--save_every_n_epochs', type=int, default=5)
     parser.add_argument('--save_path', type=str, required=True)
+    parser.add_argument('--normalize_slots', type=str2bool, default=False)
     parser.add_argument(
         "--wandb_project", type=str, required=False,
     )
@@ -200,13 +201,13 @@ if __name__ == '__main__':
     encoder_output_transform = MLP(
         inp_dim=args.ch, outp_dim=args.slot_size, hidden_dims=[2 * args.ch], initial_layer_norm=True,
     )
-    initializer = FixedLearnedInit(n_slots=args.num_slots, dim=args.slot_size)
+    initializer = FixedLearnedInit(n_slots=args.num_slots, dim=args.slot_size, normalize_slots=args.normalize_slots)
     slot_attention = SlotAttention(
-        inp_dim=args.slot_size, slot_dim=args.slot_size, n_iters=2, use_mlp=True,
+        inp_dim=args.slot_size, slot_dim=args.slot_size, n_iters=2, use_mlp=True, normalize_slots=args.normalize_slots
     )
     decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=args.ch, hidden_dims=[1024, 1024, 1024],
                          n_patches=n_patches)
-    predictor = TransformerEncoder(dim=args.slot_size, n_blocks=1, n_heads=4,)
+    predictor = TransformerEncoder(dim=args.slot_size, n_blocks=1, n_heads=4, normalize_output=args.normalize_slots)
     latent_processor = LatentProcessor(corrector=slot_attention, predictor=predictor, first_step_corrector_args={'n_iters': 3})
     slot_contrast_akornsaur = SlotContrastAkornSAur(
         encoder=encoder, encoder_output_transform=encoder_output_transform, initializer=initializer, decoder=decoder,
