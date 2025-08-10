@@ -10,7 +10,7 @@ from ema_pytorch import EMA
 from tqdm import tqdm
 
 from source.models.objs.knet import AKOrN
-from source.models.slotcontrast.loss import SlotSlotContrastiveLoss
+from source.models.slotcontrast.loss import SlotSlotContrastiveLoss, SimilarityLoss
 from source.models.slotcontrast.model import SlotContrastAkornSAur
 from source.models.slotcontrast.modules.decoders import MLPDecoder
 from source.models.slotcontrast.modules.initializer import FixedLearnedInit
@@ -150,6 +150,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_every_n_epochs', type=int, default=5)
     parser.add_argument('--save_path', type=str, required=True)
     parser.add_argument('--normalize_slots', type=str2bool, default=False)
+    parser.add_argument('--aux_loss', type=str, choices=['contrast', 'similarity'], default='contrast')
     parser.add_argument(
         "--wandb_project", type=str, required=False,
     )
@@ -213,7 +214,7 @@ if __name__ == '__main__':
         encoder=encoder, encoder_output_transform=encoder_output_transform, initializer=initializer, decoder=decoder,
         latent_processor=latent_processor, is_encoder_frozen=True,
     ).to(DEVICE)
-    ss_contrast_loss = SlotSlotContrastiveLoss(temperature=args.temperature,)
+    aux_loss = SlotSlotContrastiveLoss(temperature=args.temperature, ) if args.aux_loss == 'contrast' else SimilarityLoss()
 
     optimizer = torch.optim.Adam(slot_contrast_akornsaur.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
@@ -270,7 +271,7 @@ if __name__ == '__main__':
             output = slot_contrast_akornsaur(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
             optimizer.zero_grad()
             mse_loss = torch.nn.functional.mse_loss(output['features_reconstruction_sequence'], output['features_sequence'])
-            contrast_loss = ss_contrast_loss(output['slots_sequence'])
+            contrast_loss = aux_loss(output['slots_sequence'])
             total_loss = mse_loss + args.contrast_loss_coeff * contrast_loss
             total_loss.backward()
 
@@ -296,7 +297,7 @@ if __name__ == '__main__':
                 record['global_step'] = global_step
                 record['train/epoch_loss'] = epoch_loss / n_batches
                 record['train/epoch_loss_mse'] = epoch_loss_mse / n_batches
-                record['train/epoch_loss_contrast'] = epoch_loss_contrast / n_batches
+                record[f'train/epoch_loss_{args.aux_loss}'] = epoch_loss_contrast / n_batches
 
             train_pbar.set_postfix(record, refresh=False)
             if i == n_batches - 1 or global_step % args.log_every_n_steps == 0:
@@ -358,7 +359,7 @@ if __name__ == '__main__':
                 output = slot_contrast_akornsaur(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
 
             mse_loss = torch.nn.functional.mse_loss(output['features_reconstruction_sequence'], output['features_sequence'])
-            contrast_loss = ss_contrast_loss(output['slots_sequence'])
+            contrast_loss = aux_loss(output['slots_sequence'])
             val_loss_mse += mse_loss.item() * images.size()[0]
             val_loss_contrast += contrast_loss.item() * images.size()[0]
             val_loss += (mse_loss + args.contrast_loss_coeff * contrast_loss).item() * images.size()[0]
@@ -372,7 +373,7 @@ if __name__ == '__main__':
                 val_loss_contrast /= k
                 record['val/loss'] = val_loss
                 record['val/loss_mse'] = val_loss_mse
-                record['val/loss_contrast'] = val_loss_contrast
+                record[f'val/loss_{args.aux_loss}'] = val_loss_contrast
                 if do_need_log_ari:
                     record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
                     record['val/ari_decoder'] = ari_decoder.compute().item()

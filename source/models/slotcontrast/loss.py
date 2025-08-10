@@ -26,3 +26,13 @@ class SlotSlotContrastiveLoss(nn.Module):
         target = torch.eye(S).expand(B * T, S, S).to(ss.device)
         loss = self.criterion(ss, target)
         return loss
+
+
+class SimilarityLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, slots):
+        s1 = slots[:, :-1]
+        s2 = slots[:, 1:]
+        return nn.functional.mse_loss(s1, s2)
