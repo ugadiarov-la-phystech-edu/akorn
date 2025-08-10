@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional, Tuple, Union
 
 import einops
-import timm.layers.pos_embed
 import torch
 from torch import nn
 
@@ -33,6 +32,7 @@ class MLPDecoder(nn.Module):
         bs, n_slots, dims = slots.shape
 
         if not self.training and self.eval_output_size is not None:
+            import timm.layers.pos_embed
             pos_emb = timm.layers.pos_embed.resample_abs_pos_embed(
                 self.pos_emb.squeeze(1),
                 new_size=self.eval_output_size,
@@ -179,6 +179,7 @@ class SlotMixerDecoder(nn.Module):
 
     def forward(self, slots: torch.Tensor) -> Dict[str, torch.Tensor]:
         if not self.training and self.eval_output_size is not None:
+            import timm.layers.pos_embed
             pos_emb = timm.layers.pos_embed.resample_abs_pos_embed(
                 self.pos_emb,
                 new_size=self.eval_output_size,
