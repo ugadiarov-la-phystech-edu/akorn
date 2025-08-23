@@ -2,13 +2,14 @@ import argparse
 import math
 import os
 
+import comet_ml
 import torch
 from comet_ml import CometExperiment
 
-import comet_ml
 from ema_pytorch import EMA
 from tqdm import tqdm
 
+from source.models.commons import BroadCastDecoder
 from source.models.objs.knet import AKOrN
 from source.models.savi import Learned, TransformerPredictor, Corrector
 from source.models.savi.model import AkornSAVi
@@ -133,6 +134,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_slots', type=int, default=11)
     parser.add_argument('--slot_size', type=int, default=256)
     parser.add_argument('--per_slot_initialization', type=str2bool, default=False)
+    parser.add_argument('--image_reconstruction_loss_coef', type=float, default=0)
+    parser.add_argument('--image_decoder', choices=['mlp', 'spatial_broadcast'], type=str, default='mlp')
+    parser.add_argument('--image_decoder_hidden_dim', type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.0004)
     parser.add_argument('--warmup_iters', type=int, default=10000)
     parser.add_argument('--decay_steps', type=int, default=100000)
@@ -209,8 +213,16 @@ if __name__ == '__main__':
     )
 
     decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=args.ch, hidden_dims=[512, 512, 512], n_patches=n_patches)
+    if args.image_reconstruction_loss_coef > 0:
+        if args.image_decoder == 'mlp':
+            image_decoder = MLPDecoder(inp_dim=args.slot_size, outp_dim=3, hidden_dims=[args.image_decoder_hidden_dim] * 3, n_patches=args.model_imsize ** 2)
+        else:
+            image_decoder = BroadCastDecoder(obs_size=args.model_imsize, obs_channels=3, hidden_size=args.image_decoder_hidden_dim, slot_size=args.slot_size)
+    else:
+        image_decoder = None
+
     predictor = TransformerPredictor(slot_dim=args.slot_size, action_dim=-1,)
-    akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, is_encoder_frozen=True).to('cuda')
+    akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, image_decoder, is_encoder_frozen=True).to('cuda')
     optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
@@ -236,6 +248,8 @@ if __name__ == '__main__':
     for epoch in range(args.epochs):
         akornsavi.train(True)
         epoch_loss = 0
+        epoch_features_reconstruction_loss = 0
+        epoch_images_reconstruction_loss = 0
         n_batches = len(train_dataloader)
         train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
         for i, batch in train_pbar:
@@ -250,7 +264,13 @@ if __name__ == '__main__':
             output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
 
             optimizer.zero_grad()
-            loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
+            features_reconstruction_loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
+            if args.image_reconstruction_loss_coef > 0:
+                images_reconstruction_loss = torch.nn.functional.mse_loss(images, output['images_reconstruction_sequence'])
+            else:
+                images_reconstruction_loss = 0
+
+            loss = features_reconstruction_loss + args.image_reconstruction_loss_coef * images_reconstruction_loss
             loss.backward()
 
             grad_norm = torch.nn.utils.clip_grad_norm_(akornsavi.parameters(), args.grad_norm_clip)
@@ -258,16 +278,24 @@ if __name__ == '__main__':
             scheduler.step()
 
             loss = loss.item()
+            features_reconstruction_loss = features_reconstruction_loss.item()
+            images_reconstruction_loss = images_reconstruction_loss.item()
             epoch_loss += loss
+            epoch_features_reconstruction_loss += features_reconstruction_loss
+            epoch_images_reconstruction_loss += images_reconstruction_loss
             record = {}
             record['global_step'] = global_step
             record['train/step_loss'] = loss
+            record['train/step_features_reconstruction_loss'] = features_reconstruction_loss
+            record['train/step_images_reconstruction_loss'] = images_reconstruction_loss
             record['train/grad_norm'] = grad_norm.item()
             record.update({f'lr_{k}': lr for k, lr in enumerate(scheduler.get_lr())})
 
             if i == n_batches - 1:
                 record['global_step'] = global_step
                 record['train/epoch_loss'] = epoch_loss / n_batches
+                record['train/epoch_features_reconstruction_loss'] = epoch_features_reconstruction_loss / n_batches
+                record['train/epoch_images_reconstruction_loss'] = epoch_images_reconstruction_loss / n_batches
 
             train_pbar.set_postfix(record, refresh=False)
             if i == n_batches - 1 or global_step % args.log_every_n_steps == 0:
@@ -277,6 +305,8 @@ if __name__ == '__main__':
 
 
         val_loss = 0
+        val_features_reconstruction_loss = 0
+        val_images_reconstruction_loss = 0
         k = 0
         val_n_batches = len(val_dataloader)
         akornsavi.train(False)
@@ -299,14 +329,13 @@ if __name__ == '__main__':
                 has_gt_masks = False
 
             images = images.to(DEVICE)
-            k += images.size()[0]
+            batch_size = images.size()[0]
+            k += batch_size
             do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
             do_need_visualize = epoch % args.visualize_every_n_epochs == 0
             if (i == 0 and do_need_visualize) or do_need_log_ari:
                 output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True, masks=True)
                 vis_images = images[:args.visualize_n_images]
-                slot_attention_masks = output["slot_attention_masks_hard_sequence"][:args.visualize_n_images]
-                decoder_masks = output["decoder_masks_hard_sequence"][:args.visualize_n_images]
                 if has_gt_masks:
                     vis_gt_masks = gt_masks[:args.visualize_n_images].to(torch.int64).squeeze(1)
                     vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=args.num_slots)
@@ -314,27 +343,34 @@ if __name__ == '__main__':
                 else:
                     vis_gt_masks = None
 
-                visualizations['decoder_masks'] = grid(vis_images,
-                                                   output["decoder_masks_sequence"][:args.visualize_n_images])
-                visualizations['decoder_masks_hard'] = grid(vis_images,
-                                                   output["decoder_masks_hard_sequence"][:args.visualize_n_images])
-                visualizations['slot_attention_masks'] = grid(vis_images,
-                                                   output["slot_attention_masks_sequence"][:args.visualize_n_images])
-                visualizations['slot_attention_masks_hard'] = grid(vis_images,
-                                                        output["slot_attention_masks_hard_sequence"][:args.visualize_n_images])
-                del slot_attention_masks, decoder_masks
+                for key in ['decoder_masks', 'decoder_masks_hard', 'slot_attention_masks', 'slot_attention_masks_hard',
+                            'images_reconstruction', 'images_reconstruction_masks',
+                            'images_reconstruction_masks_hard']:
+                    visualizations[key] = grid(vis_images, output[f'{key}_sequence'][:args.visualize_n_images])
             else:
                 output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
 
-            loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
-            val_loss += loss.item() * images.size()[0]
+            features_reconstruction_loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
+            if args.image_reconstruction_loss_coef > 0:
+                image_reconstruction_loss = torch.nn.functional.mse_loss(images, output['images_reconstruction_sequence'])
+            else:
+                image_reconstruction_loss = 0
+
+            loss = features_reconstruction_loss + args.image_reconstruction_loss_coef * image_reconstruction_loss
+            val_loss += loss.item() * batch_size
+            val_features_reconstruction_loss += features_reconstruction_loss.item() * batch_size
+            val_images_reconstruction_loss += image_reconstruction_loss.item() * batch_size
             if do_need_log_ari:
                 gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
                 ari_slot_attention.update(gt_masks, output["slot_attention_masks_hard_sequence"])
                 ari_decoder.update(gt_masks, output["decoder_masks_hard_sequence"])
             if i == val_n_batches - 1:
                 val_loss /= k
+                val_features_reconstruction_loss /= k
+                val_images_reconstruction_loss /= k
                 record['val/loss'] = val_loss
+                record['val/val_features_reconstruction_loss'] = val_features_reconstruction_loss
+                record['val/val_images_reconstruction_loss'] = val_images_reconstruction_loss
                 if do_need_log_ari:
                     record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
                     record['val/ari_decoder'] = ari_decoder.compute().item()

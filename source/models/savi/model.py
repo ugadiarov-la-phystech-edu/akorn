@@ -7,13 +7,14 @@ from ..slot_attention.resizer import Resizer, SoftToHardMask
 
 class AkornSAVi(nn.Module):
     def __init__(self, encoder: nn.Module, features_projector: nn.Module, initializer: nn.Module, slot_attention: nn.Module,
-                 decoder: nn.Module, predictor: Predictor, is_encoder_frozen: bool = True) -> None:
+                 decoder: nn.Module, predictor: Predictor, image_decoder: nn.Module = None, is_encoder_frozen: bool = True) -> None:
         super().__init__()
         self.encoder = encoder
         self.features_projector = features_projector
         self.initializer = initializer
         self.slot_attention = slot_attention
         self.decoder = decoder
+        self.image_decoder = image_decoder
         self.predictor = predictor
         self.is_encoder_frozen = is_encoder_frozen
         self.encoder = self.encoder.train(not self.is_encoder_frozen)
@@ -71,6 +72,8 @@ class AkornSAVi(nn.Module):
         features_reconstruction_sequence = []
         slot_attention_masks_sequence = []
         decoder_masks_sequence = []
+        images_reconstruction_sequence = []
+        images_reconstruction_masks_sequence = []
 
         sequence_length = images.shape[1]
 
@@ -93,24 +96,37 @@ class AkornSAVi(nn.Module):
                 if reconstruct:
                     features_sequence.append(img_feats)
                     features_reconstruction_sequence.append(decoder_output['reconstruction'].movedim(2, 1).reshape_as(img_feats))
+                    if self.image_decoder is not None:
+                        images_decoder_output = self.image_decoder(slots)
+                        images_reconstruction_sequence.append(images_decoder_output['reconstruction'].movedim(2, 1).reshape_as(imgs))
                 if masks:
                     slot_attention_masks_sequence.append(slot_attention_output['masks'])
                     decoder_masks_sequence.append(decoder_output['masks'])
-
+                    if self.image_decoder is not None:
+                        images_reconstruction_masks_sequence.append(images_decoder_output['masks'])
 
         result = {'slots_sequence': torch.stack(slots_sequence, dim=1)}
         if reconstruct:
             result['features_sequence'] = torch.stack(features_sequence, dim=1)
             result['features_reconstruction_sequence'] = torch.stack(features_reconstruction_sequence, dim=1)
+            if self.image_decoder is not None:
+                result['images_reconstruction_sequence'] = torch.stack(images_reconstruction_sequence, dim=1)
 
         if masks:
             slot_attention_masks_sequence = torch.stack(slot_attention_masks_sequence, dim=1)
             slot_attention_masks_sequence, slot_attention_masks_hard_sequence = self.process_masks(slot_attention_masks_sequence, images, )
             decoder_masks_sequence = torch.stack(decoder_masks_sequence, dim=1)
             decoder_masks_sequence, decoder_masks_hard_sequence = self.process_masks(decoder_masks_sequence, images, )
+
             result['slot_attention_masks_sequence'] = slot_attention_masks_sequence
             result['slot_attention_masks_hard_sequence'] = slot_attention_masks_hard_sequence
             result['decoder_masks_sequence'] = decoder_masks_sequence
             result['decoder_masks_hard_sequence'] = decoder_masks_hard_sequence
+            if self.image_decoder is not None:
+                images_reconstruction_masks_sequence = torch.stack(images_reconstruction_masks_sequence, dim=1)
+                images_reconstruction_masks_sequence, images_reconstruction_masks_hard_sequence = self.process_masks(
+                    images_reconstruction_masks_sequence, images, )
+                result['images_reconstruction_masks_sequence'] = images_reconstruction_masks_sequence
+                result['images_reconstruction_masks_hard_sequence'] = images_reconstruction_masks_hard_sequence
 
         return result

@@ -160,16 +160,22 @@ def to_one_hot(tsr, num_classes=-1):
     return torch.nn.functional.one_hot(tsr, num_classes=num_classes).movedim(-1, 1)
 
 
-def vis_mask(images, masks):
+def vis(source_images, images):
+    if source_images.shape[-3] == images.shape[-3]:
+        # handle reconstructions
+        return torch.stack([source_images, images], dim=-4)
+
+    # handle masks
     # images.shape -> ..., n_channels, h, w
-    images = images.unsqueeze(-4)
+    source_images = source_images.unsqueeze(-4)
     # masks.shape -> ..., n_slots, h, w
-    masks = masks.unsqueeze(-3)
-    return torch.cat([images, images * masks + (1 - masks)], dim=-4)
+    images = images.unsqueeze(-3)
+    return torch.cat([source_images, source_images * images + (1 - images)], dim=-4)
 
 
-def grid(images, masks):
-    attention_maps = vis_mask(images, masks)
+def grid(source_images, images):
+    images = images.clamp_(0, 1)
+    attention_maps = vis(source_images, images)
     # attention_maps.shape -> ..., n_slots, n_channels, h, w
     log_image = attention_maps.flatten(end_dim=-4)
     log_image = make_grid(log_image, attention_maps.shape[-4], pad_value=0.5).movedim(0, -1).cpu().numpy()
@@ -179,11 +185,11 @@ def grid(images, masks):
 def grid_numpy(images, gt_masks, decoder_masks, slot_attention_masks):
     log_image = []
     if gt_masks is not None:
-        attn_gt = vis_mask(images, gt_masks)
+        attn_gt = vis(images, gt_masks)
         log_image.append(attn_gt)
 
-    attn_decoder = vis_mask(images, decoder_masks)
-    attn_sa = vis_mask(images, slot_attention_masks)
+    attn_decoder = vis(images, decoder_masks)
+    attn_sa = vis(images, slot_attention_masks)
     log_image.append(attn_sa)
     log_image.append(attn_decoder)
 
