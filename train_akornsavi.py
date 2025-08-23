@@ -47,6 +47,56 @@ def maybe_log_wandb(experiment: CometExperiment, step, record, visualizations_di
             experiment.log_image(visualization, name=key, step=step)
 
 
+def step(model: AkornSAVi, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
+         images: torch.Tensor, do_train: bool, do_need_log_ari: bool = False, gt_masks: torch.Tensor = None,
+         ari_slot_attention = None, ari_decoder = None):
+    output = model(images=images, actions=torch.empty((0, images.shape[1])), prior_slots=None, reconstruct=True)
+
+    if do_train:
+        optimizer.zero_grad()
+    features_reconstruction_loss = torch.nn.functional.mse_loss(output['features_sequence'],
+                                                                output['features_reconstruction_sequence'])
+    if args.image_reconstruction_loss_coef > 0:
+        images_reconstruction_loss = torch.nn.functional.mse_loss(images, output['images_reconstruction_sequence'])
+    else:
+        images_reconstruction_loss = 0
+
+    loss = features_reconstruction_loss + args.image_reconstruction_loss_coef * images_reconstruction_loss
+    output = dict(loss=loss.item(), features_reconstruction_loss=features_reconstruction_loss.item(),
+                  images_reconstruction_loss=images_reconstruction_loss.item())
+
+    if do_train:
+        loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(akornsavi.parameters(), args.grad_norm_clip)
+        optimizer.step()
+        scheduler.step()
+        output['grad_norm'] = grad_norm.item()
+
+    if do_need_log_ari:
+        gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
+        ari_slot_attention.update(gt_masks, output["slot_attention_masks_hard_sequence"])
+        ari_decoder.update(gt_masks, output["decoder_masks_hard_sequence"])
+
+    return output
+
+
+def get_visualization(model: AkornSAVi, vis_images: torch.Tensor, gt_masks: torch.Tensor, num_slots: int, has_gt_masks: bool):
+    output = model(images=vis_images, actions=torch.empty((0, vis_images.shape[1])), prior_slots=None, reconstruct=True,
+                       masks=True)
+    visualizations = {}
+    if has_gt_masks:
+        vis_gt_masks = gt_masks.to(torch.int64).squeeze(1)
+        vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=num_slots)
+        visualizations['ground_truth'] = grid(vis_images, vis_gt_masks)
+
+    for key in ['decoder_masks', 'decoder_masks_hard', 'slot_attention_masks', 'slot_attention_masks_hard',
+                'images_reconstruction', 'images_reconstruction_masks',
+                'images_reconstruction_masks_hard']:
+        visualizations[key] = grid(vis_images, output[f'{key}_sequence'])
+
+    return visualizations
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -259,36 +309,17 @@ if __name__ == '__main__':
             else:
                 images = batch
 
-            images = images.to('cuda')
             global_step += 1
-            output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
-
-            optimizer.zero_grad()
-            features_reconstruction_loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
-            if args.image_reconstruction_loss_coef > 0:
-                images_reconstruction_loss = torch.nn.functional.mse_loss(images, output['images_reconstruction_sequence'])
-            else:
-                images_reconstruction_loss = 0
-
-            loss = features_reconstruction_loss + args.image_reconstruction_loss_coef * images_reconstruction_loss
-            loss.backward()
-
-            grad_norm = torch.nn.utils.clip_grad_norm_(akornsavi.parameters(), args.grad_norm_clip)
-            optimizer.step()
-            scheduler.step()
-
-            loss = loss.item()
-            features_reconstruction_loss = features_reconstruction_loss.item()
-            images_reconstruction_loss = images_reconstruction_loss.item()
-            epoch_loss += loss
-            epoch_features_reconstruction_loss += features_reconstruction_loss
-            epoch_images_reconstruction_loss += images_reconstruction_loss
+            train_step_output = step(akornsavi, optimizer, scheduler, images.to(DEVICE), do_train=True)
+            epoch_loss += train_step_output['loss']
+            epoch_features_reconstruction_loss += train_step_output['features_reconstruction_loss']
+            epoch_images_reconstruction_loss += train_step_output['images_reconstruction_loss']
             record = {}
             record['global_step'] = global_step
-            record['train/step_loss'] = loss
-            record['train/step_features_reconstruction_loss'] = features_reconstruction_loss
-            record['train/step_images_reconstruction_loss'] = images_reconstruction_loss
-            record['train/grad_norm'] = grad_norm.item()
+            record['train/step_loss'] = train_step_output['loss']
+            record['train/step_features_reconstruction_loss'] = train_step_output['features_reconstruction_loss']
+            record['train/step_images_reconstruction_loss'] = train_step_output['images_reconstruction_loss']
+            record['train/grad_norm'] = train_step_output['grad_norm']
             record.update({f'lr_{k}': lr for k, lr in enumerate(scheduler.get_lr())})
 
             if i == n_batches - 1:
@@ -302,7 +333,6 @@ if __name__ == '__main__':
                 maybe_log_wandb(experiment, global_step, record)
 
         train_pbar.close()
-
 
         val_loss = 0
         val_features_reconstruction_loss = 0
@@ -319,7 +349,6 @@ if __name__ == '__main__':
             if isinstance(batch, tuple):
                 assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
                 _, images, gt_masks, _ = batch
-                gt_masks = gt_masks.to(DEVICE)
                 # treat segmentations with class_id <= 0 as background
                 gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
                 has_gt_masks = True
@@ -328,42 +357,15 @@ if __name__ == '__main__':
                 gt_masks = None
                 has_gt_masks = False
 
-            images = images.to(DEVICE)
+            do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
             batch_size = images.size()[0]
             k += batch_size
-            do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
-            do_need_visualize = epoch % args.visualize_every_n_epochs == 0
-            if (i == 0 and do_need_visualize) or do_need_log_ari:
-                output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True, masks=True)
-                vis_images = images[:args.visualize_n_images]
-                if has_gt_masks:
-                    vis_gt_masks = gt_masks[:args.visualize_n_images].to(torch.int64).squeeze(1)
-                    vis_gt_masks = to_one_hot(vis_gt_masks, num_classes=args.num_slots)
-                    visualizations['ground_truth'] = grid(vis_images, vis_gt_masks)
-                else:
-                    vis_gt_masks = None
-
-                for key in ['decoder_masks', 'decoder_masks_hard', 'slot_attention_masks', 'slot_attention_masks_hard',
-                            'images_reconstruction', 'images_reconstruction_masks',
-                            'images_reconstruction_masks_hard']:
-                    visualizations[key] = grid(vis_images, output[f'{key}_sequence'][:args.visualize_n_images])
-            else:
-                output = akornsavi(images=images, actions=torch.empty((0, batch.shape[1])), prior_slots=None, reconstruct=True)
-
-            features_reconstruction_loss = torch.nn.functional.mse_loss(output['features_sequence'], output['features_reconstruction_sequence'])
-            if args.image_reconstruction_loss_coef > 0:
-                image_reconstruction_loss = torch.nn.functional.mse_loss(images, output['images_reconstruction_sequence'])
-            else:
-                image_reconstruction_loss = 0
-
-            loss = features_reconstruction_loss + args.image_reconstruction_loss_coef * image_reconstruction_loss
-            val_loss += loss.item() * batch_size
-            val_features_reconstruction_loss += features_reconstruction_loss.item() * batch_size
-            val_images_reconstruction_loss += image_reconstruction_loss.item() * batch_size
-            if do_need_log_ari:
-                gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
-                ari_slot_attention.update(gt_masks, output["slot_attention_masks_hard_sequence"])
-                ari_decoder.update(gt_masks, output["decoder_masks_hard_sequence"])
+            val_step_output = step(akornsavi, optimizer=None, scheduler=None, images=images.to(DEVICE), do_train=False,
+                                   do_need_log_ari=do_need_log_ari, gt_masks=gt_masks.to(DEVICE) if has_gt_masks else None,
+                                   ari_slot_attention=ari_slot_attention, ari_decoder=ari_decoder)
+            val_loss += val_step_output['loss'] * batch_size
+            val_features_reconstruction_loss += val_step_output['features_reconstruction_loss'] * batch_size
+            val_images_reconstruction_loss += val_step_output['images_reconstruction_loss'] * batch_size
             if i == val_n_batches - 1:
                 val_loss /= k
                 val_features_reconstruction_loss /= k
@@ -374,11 +376,30 @@ if __name__ == '__main__':
                 if do_need_log_ari:
                     record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
                     record['val/ari_decoder'] = ari_decoder.compute().item()
-                val_pbar.set_postfix(record)
 
+        val_pbar.set_postfix(record)
         val_pbar.close()
 
+        do_need_visualize = epoch % args.visualize_every_n_epochs == 0
+        if do_need_visualize:
+            batch = next(iter(val_dataloader))
+            if isinstance(batch, tuple):
+                assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
+                _, images, gt_masks, _ = batch
+                # treat segmentations with class_id <= 0 as background
+                gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
+                has_gt_masks = True
+            else:
+                images = batch
+                gt_masks = None
+                has_gt_masks = False
+
+            visualizations = get_visualization(akornsavi, images[:args.visualize_n_images].to(DEVICE),
+                                               gt_masks[:args.visualize_n_images].to(DEVICE) if has_gt_masks else None,
+                                               args.num_slots, has_gt_masks)
+
         maybe_log_wandb(experiment, global_step, record, visualizations)
+
         if epoch % args.save_every_n_epochs == 0:
             checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
                           'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
