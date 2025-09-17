@@ -59,7 +59,7 @@ def step(model: AkornSAVi, optimizer: torch.optim.Optimizer, scheduler: torch.op
     if args.image_reconstruction_loss_coef > 0:
         images_reconstruction_loss = torch.nn.functional.mse_loss(images, output['images_reconstruction_sequence'])
     else:
-        images_reconstruction_loss = 0
+        images_reconstruction_loss = torch.as_tensor(0)
 
     loss = features_reconstruction_loss + args.image_reconstruction_loss_coef * images_reconstruction_loss
     output = dict(loss=loss.item(), features_reconstruction_loss=features_reconstruction_loss.item(),
@@ -92,7 +92,9 @@ def get_visualization(model: AkornSAVi, vis_images: torch.Tensor, gt_masks: torc
     for key in ['decoder_masks', 'decoder_masks_hard', 'slot_attention_masks', 'slot_attention_masks_hard',
                 'images_reconstruction', 'images_reconstruction_masks',
                 'images_reconstruction_masks_hard']:
-        visualizations[key] = grid(vis_images, output[f'{key}_sequence'])
+        field = f'{key}_sequence'
+        if field in output:
+            visualizations[key] = grid(vis_images, output[field])
 
     return visualizations
 
@@ -210,6 +212,8 @@ if __name__ == '__main__':
     )
     parser.add_argument("--image_file_extension", type=str, required=False)
     parser.add_argument("--from_checkpoint", type=str, required=False)
+    parser.add_argument("--load_checkpoint_strict", type=str2bool, default=True)
+    parser.add_argument("--freeze_loaded_weights", type=str2bool, default=False)
 
     args = parser.parse_args()
     torch.backends.cudnn.benchmark = True
@@ -273,12 +277,20 @@ if __name__ == '__main__':
 
     predictor = TransformerPredictor(slot_dim=args.slot_size, action_dim=-1,)
     akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, image_decoder, is_encoder_frozen=True).to('cuda')
+    if args.from_checkpoint is not None:
+        sd = torch.load(args.from_checkpoint)
+        akornsavi.load_state_dict(torch.load(args.from_checkpoint)['model'], strict=args.load_checkpoint_strict)
+        if args.freeze_loaded_weights:
+            param_names_to_freeze = set(torch.load(args.from_checkpoint)['model'].keys())
+            for name, param in akornsavi.named_parameters():
+                if name in param_names_to_freeze:
+                    param.requires_grad = False
+
+                param = None
+
     optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
-    if args.from_checkpoint is not None:
-        sd = torch.load(args.from_checkpoint)
-        akornsavi.load_state_dict(torch.load(args.from_checkpoint)['model'])
 
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
                                      num_workers=args.num_workers, is_eval=False, kind='video',
