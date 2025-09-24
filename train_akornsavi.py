@@ -279,7 +279,12 @@ if __name__ == '__main__':
     akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, image_decoder, is_encoder_frozen=True).to('cuda')
     if args.from_checkpoint is not None:
         sd = torch.load(args.from_checkpoint)
-        akornsavi.load_state_dict(torch.load(args.from_checkpoint)['model'], strict=args.load_checkpoint_strict)
+        missing, unexpected = akornsavi.load_state_dict(
+            torch.load(args.from_checkpoint)['model'], strict=args.load_checkpoint_strict
+        )
+        print('Loading weights from checkpoint:', args.from_checkpoint)
+        print('Missing parameters:', missing)
+        print('Unexpected parameters:', unexpected)
         if args.freeze_loaded_weights:
             param_names_to_freeze = set(torch.load(args.from_checkpoint)['model'].keys())
             for name, param in akornsavi.named_parameters():
