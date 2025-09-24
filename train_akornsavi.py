@@ -328,7 +328,7 @@ if __name__ == '__main__':
             else:
                 images = batch
 
-            train_step_output = step(akornsavi, optimizer, scheduler, images.to(DEVICE), do_train=True)
+            train_step_output = step(akornsavi, images.to(DEVICE), do_train=True)
             record['train/step_loss'] += train_step_output['loss']
             record['train/step_features_reconstruction_loss'] += train_step_output['features_reconstruction_loss']
             record['train/step_images_reconstruction_loss'] += train_step_output['images_reconstruction_loss']
@@ -385,7 +385,7 @@ if __name__ == '__main__':
             do_need_log_ari = has_gt_masks and epoch % args.log_ari_every_n_epochs == 0
             batch_size = images.size()[0]
             k += batch_size
-            val_step_output = step(akornsavi, optimizer=None, scheduler=None, images=images.to(DEVICE), do_train=False,
+            val_step_output = step(akornsavi, images=images.to(DEVICE), do_train=False,
                                    do_need_log_ari=do_need_log_ari, gt_masks=gt_masks.to(DEVICE) if has_gt_masks else None,
                                    ari_slot_attention=ari_slot_attention, ari_decoder=ari_decoder)
             val_loss += val_step_output['loss'] * batch_size
