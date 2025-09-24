@@ -277,6 +277,7 @@ if __name__ == '__main__':
 
     predictor = TransformerPredictor(slot_dim=args.slot_size, action_dim=-1,)
     akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, image_decoder, is_encoder_frozen=True).to('cuda')
+    param_names_to_freeze = set()
     if args.from_checkpoint is not None:
         sd = torch.load(args.from_checkpoint)
         missing, unexpected = akornsavi.load_state_dict(
@@ -314,6 +315,9 @@ if __name__ == '__main__':
     best_val_loss = math.inf
     for epoch in range(args.epochs):
         akornsavi.train(True)
+        not_frozen_params = [name for name, param in akornsavi.named_parameters() if name in param_names_to_freeze and param.requires_grad]
+        assert len(not_frozen_params) == 0, f'These parameters are expected to be frozen: {not_frozen_params}'
+
         epoch_loss = 0
         epoch_features_reconstruction_loss = 0
         epoch_images_reconstruction_loss = 0
