@@ -1,6 +1,7 @@
 import argparse
 import math
 import os
+from collections import defaultdict
 
 import comet_ml
 import torch
@@ -47,13 +48,10 @@ def maybe_log_wandb(experiment: CometExperiment, step, record, visualizations_di
             experiment.log_image(visualization, name=key, step=step)
 
 
-def step(model: AkornSAVi, optimizer: torch.optim.Optimizer, scheduler: torch.optim.lr_scheduler.LRScheduler,
-         images: torch.Tensor, do_train: bool, do_need_log_ari: bool = False, gt_masks: torch.Tensor = None,
-         ari_slot_attention = None, ari_decoder = None):
+def step(model: AkornSAVi, images: torch.Tensor, do_train: bool, do_need_log_ari: bool = False,
+         gt_masks: torch.Tensor = None, ari_slot_attention = None, ari_decoder = None):
     output = model(images=images, actions=torch.empty((0, images.shape[1])), prior_slots=None, reconstruct=True)
 
-    if do_train:
-        optimizer.zero_grad()
     features_reconstruction_loss = torch.nn.functional.mse_loss(output['features_sequence'],
                                                                 output['features_reconstruction_sequence'])
     if args.image_reconstruction_loss_coef > 0:
@@ -67,10 +65,6 @@ def step(model: AkornSAVi, optimizer: torch.optim.Optimizer, scheduler: torch.op
 
     if do_train:
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(akornsavi.parameters(), args.grad_norm_clip)
-        optimizer.step()
-        scheduler.step()
-        output['grad_norm'] = grad_norm.item()
 
     if do_need_log_ari:
         gt_masks = to_one_hot(gt_masks.to(torch.int64).squeeze(1)).to(torch.bool)
@@ -114,6 +108,7 @@ if __name__ == '__main__':
         help="optional. you can specify the dir path if the default path of each dataset is not appropritate one. Currently only applied to ImageNet",
     )
     parser.add_argument("--batchsize", type=int, default=256)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--sequence_length", type=int, default=8)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
@@ -322,7 +317,10 @@ if __name__ == '__main__':
         epoch_features_reconstruction_loss = 0
         epoch_images_reconstruction_loss = 0
         n_batches = len(train_dataloader)
+        n_updates = n_batches // args.gradient_accumulation_steps
+        optimizer.zero_grad()
         train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
+        record = defaultdict(float)
         for i, batch in train_pbar:
             if isinstance(batch, tuple):
                 assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
@@ -330,28 +328,34 @@ if __name__ == '__main__':
             else:
                 images = batch
 
-            global_step += 1
             train_step_output = step(akornsavi, optimizer, scheduler, images.to(DEVICE), do_train=True)
-            epoch_loss += train_step_output['loss']
-            epoch_features_reconstruction_loss += train_step_output['features_reconstruction_loss']
-            epoch_images_reconstruction_loss += train_step_output['images_reconstruction_loss']
-            record = {}
-            record['global_step'] = global_step
-            record['train/step_loss'] = train_step_output['loss']
-            record['train/step_features_reconstruction_loss'] = train_step_output['features_reconstruction_loss']
-            record['train/step_images_reconstruction_loss'] = train_step_output['images_reconstruction_loss']
-            record['train/grad_norm'] = train_step_output['grad_norm']
-            record.update({f'lr_{k}': lr for k, lr in enumerate(scheduler.get_lr())})
-
-            if i == n_batches - 1:
+            record['train/step_loss'] += train_step_output['loss']
+            record['train/step_features_reconstruction_loss'] += train_step_output['features_reconstruction_loss']
+            record['train/step_images_reconstruction_loss'] += train_step_output['images_reconstruction_loss']
+            if (i + 1) % args.gradient_accumulation_steps == 0:
+                global_step += 1
+                grad_norm = torch.nn.utils.clip_grad_norm_(akornsavi.parameters(), args.grad_norm_clip)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                record = {k: v / args.gradient_accumulation_steps for k, v in record.items() if 'loss' in k}
+                epoch_loss += train_step_output['loss']
+                epoch_features_reconstruction_loss += train_step_output['features_reconstruction_loss']
+                epoch_images_reconstruction_loss += train_step_output['images_reconstruction_loss']
+                record['train/grad_norm'] = grad_norm.item()
                 record['global_step'] = global_step
-                record['train/epoch_loss'] = epoch_loss / n_batches
-                record['train/epoch_features_reconstruction_loss'] = epoch_features_reconstruction_loss / n_batches
-                record['train/epoch_images_reconstruction_loss'] = epoch_images_reconstruction_loss / n_batches
+                record.update({f'lr_{k}': lr for k, lr in enumerate(scheduler.get_lr())})
 
-            train_pbar.set_postfix(record, refresh=False)
-            if i == n_batches - 1 or global_step % args.log_every_n_steps == 0:
-                maybe_log_wandb(experiment, global_step, record)
+                if global_step % n_updates == 0:
+                    record['train/epoch_loss'] = epoch_loss / n_updates
+                    record['train/epoch_features_reconstruction_loss'] = epoch_features_reconstruction_loss / n_updates
+                    record['train/epoch_images_reconstruction_loss'] = epoch_images_reconstruction_loss / n_updates
+
+                train_pbar.set_postfix(record, refresh=False)
+                if global_step % n_updates == 0 or global_step % args.log_every_n_steps == 0:
+                    maybe_log_wandb(experiment, global_step, record)
+
+                record = defaultdict(float)
 
         train_pbar.close()
 
