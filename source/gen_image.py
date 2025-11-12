@@ -3,6 +3,7 @@ from typing import Dict, Callable
 
 import torch
 from torchvision.utils import make_grid
+from torchvision.transforms.functional import to_pil_image
 from torch.nn import functional as F
 import numpy as np
 
@@ -98,6 +99,7 @@ def get_image(
     saccade_r=1,
     pca=False,
     pca_dim=128,
+    return_pil=True,
 ):
     preds = []
     N = images.shape[0]
@@ -138,4 +140,8 @@ def get_image(
     s_p = to_one_hot(preds[0], num_classes=n_clusters).unsqueeze(1)
     attn_p = s_img * s_p + (1 - s_p)
 
-    return make_grid(torch.cat([s_img, attn_p]), nrow=attn_p.shape[0] + 1, pad_value=0.5).cpu()
+    image = make_grid(torch.cat([s_img, attn_p]), nrow=attn_p.shape[0] + 1, pad_value=0.5).cpu()
+    if return_pil:
+        image = to_pil_image(image)
+
+    return image

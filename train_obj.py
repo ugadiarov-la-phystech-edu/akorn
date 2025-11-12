@@ -2,9 +2,11 @@ import argparse
 import os
 import logging
 
+import comet_ml
 import torch
 import torch.distributed
 import torch.nn as nn
+from comet_ml import CometExperiment
 from torch import optim
 
 from source.gen_image import get_image
@@ -13,7 +15,6 @@ from source.training_utils import save_checkpoint, save_model, add_gradient_hist
 from source.data.datasets.objs.load_data import load_data
 
 from source.utils import str2bool
-from torch.utils.tensorboard import SummaryWriter
 
 import accelerate
 from accelerate import Accelerator
@@ -24,8 +25,6 @@ from tqdm import tqdm
 
 # for distributed training
 from torch.distributed.nn.functional import all_gather
-
-import wandb
 
 
 def create_logger(logging_dir):
@@ -250,14 +249,14 @@ if __name__ == "__main__":
         worker_init_fn=worker_init_fn,
     )
 
+    experiment: CometExperiment = None
     if accelerator.is_main_process and args.wandb_project is not None:
         config = dict(vars(args))
         config['device_info'] = str(torch.cuda.get_device_properties(torch.cuda.current_device()))
-        wandb.init(project=args.wandb_project, group=args.wandb_group, name=args.wandb_run_name,
-                   dir=jobdir, config=config, sync_tensorboard=True)
-
-    if accelerator.is_main_process:
-        writer = SummaryWriter(jobdir)
+        experiment = comet_ml.start(project_name=args.wandb_project,)
+        experiment.add_tag(args.wandb_run_name)
+        experiment.set_name(args.wandb_run_name)
+        experiment.log_parameters(config)
 
     def train(net, ema, opt, scheduler, loader, epoch):
         losses = []
@@ -296,10 +295,10 @@ if __name__ == "__main__":
             ema.update()
 
         if accelerator.is_main_process:
-            add_gradient_histograms(writer, net, epoch)
+            add_gradient_histograms(experiment, net, epoch)
             for name, param in net.named_parameters():
                 diff = param - initial_params[name]
-                writer.add_histogram(f"hist/{name}_diff", diff, epoch)
+                experiment.log_histogram_3d(diff.detach().numpy(), name=f"hist/{name}_diff", step=epoch, epoch=epoch)
         if accelerator.is_main_process:
             logger.info(
                 f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss/n:.3f}"
@@ -307,9 +306,9 @@ if __name__ == "__main__":
 
         total_loss = running_loss / n
         if accelerator.is_main_process:
-            writer.add_scalar("training loss", total_loss, epoch)
+            experiment.log_metric("training_loss", total_loss, step=epoch, epoch=epoch)
             for k, lr in enumerate(scheduler.get_lr()):
-                writer.add_scalar(f'lr_{k}', lr, epoch)
+                experiment.log_metric(f'lr_{k}', lr, step=epoch, epoch=epoch)
 
         return total_loss
 
@@ -427,7 +426,7 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     for n_clusters in args.vis_n_clusters:
                         vis_image = get_image(model, image, n_clusters=n_clusters, pca=True)
-                        writer.add_image(f'train/vis_n-clusters-{n_clusters}', vis_image, epoch)
+                        experiment.log_image(name=f'train/vis_n-clusters-{n_clusters}', image_data=vis_image, step=epoch)
 
     if accelerator.is_main_process:
         torch.save(
@@ -436,5 +435,5 @@ if __name__ == "__main__":
         )
         torch.save(ema.state_dict(), os.path.join(jobdir, f"ema_model.pth"))
 
-    if accelerator.is_main_process and wandb.run is not None:
-        wandb.finish()
+    if accelerator.is_main_process and experiment is not None:
+        experiment.end()
