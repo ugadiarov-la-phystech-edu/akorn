@@ -298,7 +298,7 @@ if __name__ == "__main__":
             add_gradient_histograms(experiment, net, epoch)
             for name, param in net.named_parameters():
                 diff = param - initial_params[name]
-                experiment.log_histogram_3d(diff.detach().numpy(), name=f"hist/{name}_diff", step=epoch, epoch=epoch)
+                experiment.log_histogram_3d(diff.detach().cpu().numpy(), name=f"hist/{name}_diff", step=epoch, epoch=epoch)
         if accelerator.is_main_process:
             logger.info(
                 f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss/n:.3f}"

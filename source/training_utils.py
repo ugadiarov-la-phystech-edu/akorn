@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 def add_gradient_histograms(experiment: CometExperiment, model, epoch):
     for name, param in model.named_parameters():
         if param.grad is not None:
-            experiment.log_histogram_3d(param.grad.detach().numpy(), name=name + "/grad", step=epoch, epoch=epoch)
+            experiment.log_histogram_3d(param.grad.detach().cpu().numpy(), name=name + "/grad", step=epoch, epoch=epoch)
 
 
 def save_model(model, epoch, checkpoint_dir, prefix="checkpoint"):
