@@ -8,6 +8,7 @@ import os.path as osp
 import torch
 from PIL import Image, ImageFile
 from torchvision import transforms
+from tqdm import tqdm
 
 from source.data.augs import simclr_augmentation
 
@@ -59,7 +60,7 @@ class EpisodesDataset(Dataset):
         self.episode_images = []
         self.episode2offset = [0]
         self.index2episode = []
-        for i, f in enumerate(self.folders):
+        for i, f in enumerate(tqdm(self.folders, desc=f"Indexing split: {self.mode}")):
             dir_name = os.path.join(self.root, str(f))
             paths = list(glob.glob(osp.join(dir_name, f'*.{self.extension}')))
             actual_length = len(paths)

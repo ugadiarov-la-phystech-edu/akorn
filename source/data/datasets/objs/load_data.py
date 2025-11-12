@@ -111,6 +111,9 @@ def load_data(data, data_root, data_imsize, is_eval=False, kind=None, image_file
         if kind in ('image', 'video'):
             dataset = EpisodesDataset(**kwargs)
         elif kind == 'pair':
+            for key in ('kind', 'sequence_length'):
+                del kwargs[key]
+
             dataset = AugmentedPairEpisodeDataset(**kwargs)
 
         imsize = data_imsize
