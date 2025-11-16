@@ -253,6 +253,8 @@ if __name__ == "__main__":
     if accelerator.is_main_process and args.wandb_project is not None:
         config = dict(vars(args))
         config['device_info'] = str(torch.cuda.get_device_properties(torch.cuda.current_device()))
+        slurm_job_id_key = 'SLURM_JOB_ID'
+        config[slurm_job_id_key] = os.environ.get(slurm_job_id_key, None)
         experiment = comet_ml.start(project_name=args.wandb_project,)
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
