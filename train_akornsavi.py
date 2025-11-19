@@ -11,7 +11,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DistributedSampler
 
 from ema_pytorch import EMA
-from torch import nn
 from tqdm import tqdm
 
 from source.models.commons import BroadCastDecoder
@@ -41,6 +40,8 @@ def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=
     if len(ddp_config) > 0:
         sampler = DistributedSampler(dataset, num_replicas=ddp_config['world_size'],
                                      rank=ddp_config['local_rank'], shuffle=True, drop_last=drop_last)
+        del kwargs['shuffle']
+        del kwargs['drop_last']
         kwargs['sampler'] = sampler
 
     loader = torch.utils.data.DataLoader(dataset, **kwargs)
