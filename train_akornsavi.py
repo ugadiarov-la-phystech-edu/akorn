@@ -480,12 +480,12 @@ if __name__ == '__main__':
                                                    args.num_slots, has_gt_masks)
 
             maybe_log_wandb(experiment, global_step, record, visualizations)
+            if use_ddp:
+                state_dict = akornsavi.module.state_dict()
+            else:
+                state_dict = akornsavi.state_dict()
 
             if epoch % args.save_every_n_epochs == 0:
-                if use_ddp:
-                    state_dict = akornsavi.module.state_dict()
-                else:
-                    state_dict = akornsavi.state_dict()
 
                 checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
                               'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
