@@ -151,6 +151,7 @@ if __name__ == '__main__':
 
     # AKOrN options
     parser.add_argument("--N", type=int, default=4, help="num of rotating dimensions")
+    parser.add_argument("--gamma", type=float, default=1.0, help="step size")
     parser.add_argument("--J", type=str, default="conv", help="connectivity")
     parser.add_argument("--use_omega", type=str2bool, default=False)
     parser.add_argument("--global_omg", type=str2bool, default=False)
@@ -160,7 +161,10 @@ if __name__ == '__main__':
         default="gn",
         help="normalization. gn, sandb(scale and bias), or none",
     )
-
+    parser.add_argument(
+        "--init_omg", type=float, default=0.01, help="initial omega length"
+    )
+    parser.add_argument("--learn_omg", type=str2bool, default=False)
     parser.add_argument(
         "--use_ro_x",
         type=str2bool,
@@ -224,6 +228,7 @@ if __name__ == '__main__':
         ch=args.ch,
         L=args.L,
         T=args.T,
+        gamma=args.gamma,
         J=args.J,  # "conv" or "attn",
         use_omega=args.use_omega,
         global_omg=args.global_omg,
@@ -231,6 +236,8 @@ if __name__ == '__main__':
         psize=args.psize,
         imsize=args.model_imsize,
         autorescale=args.autorescale,
+        init_omg=args.init_omg,
+        learn_omg=args.learn_omg,
         maxpool=args.maxpool,
         project=args.project,
         heads=args.heads,
