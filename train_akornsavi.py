@@ -6,6 +6,9 @@ from collections import defaultdict
 import comet_ml
 import torch
 from comet_ml import CometExperiment
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DistributedSampler
 
 from ema_pytorch import EMA
 from torch import nn
@@ -25,7 +28,7 @@ DEVICE = 'cuda'
 
 
 def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False,
-               image_file_extension=None, kind='image', sequence_length=1):
+               image_file_extension=None, kind='image', sequence_length=1, ddp_config={}):
     from source.data.datasets.objs.load_data import load_data
 
     dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind=kind,
@@ -34,6 +37,11 @@ def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
     if data in ("clevrtex_full", "clevrtex_outd", "clevrtex_camo", "coco"):
         kwargs['collate_fn'] = collate_fn
+
+    if len(ddp_config) > 0:
+        sampler = DistributedSampler(dataset, num_replicas=ddp_config['world_size'],
+                                     rank=ddp_config['local_rank'], shuffle=True, drop_last=drop_last)
+        kwargs['sampler'] = sampler
 
     loader = torch.utils.data.DataLoader(dataset, **kwargs)
     return loader, imsize
@@ -92,6 +100,19 @@ def get_visualization(model: AkornSAVi, vis_images: torch.Tensor, gt_masks: torc
             visualizations[key] = grid(vis_images, output[field])
 
     return visualizations
+
+
+def ddp_setup():
+    rank = int(os.environ['RANK'])
+    local_rank = int(os.environ['LOCAL_RANK'])
+    world_size = int(os.environ['WORLD_SIZE'])
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(local_rank)
+    return rank, local_rank, world_size
+
+
+def ddp_cleanup():
+    dist.destroy_process_group()
 
 
 if __name__ == '__main__':
@@ -297,21 +318,30 @@ if __name__ == '__main__':
 
                 param = None
 
-    if torch.cuda.device_count() > 1 and DEVICE == 'cuda':
+    use_ddp = torch.cuda.device_count() > 1 and DEVICE == 'cuda'
+    if use_ddp:
+        rank, local_rank, world_size = ddp_setup()
+        ddp_config = {'world_size': world_size, 'rank': rank, 'local_rank': local_rank}
+        DEVICE = local_rank
         print(f"Using {torch.cuda.device_count()} GPUs!")
-        akornsavi = nn.DataParallel(akornsavi)
+        akornsavi.to(ddp_config['local_rank'])
+        akornsavi = DDP(akornsavi, device_ids=[ddp_config['local_rank']])
+    else:
+        ddp_config = {}
+        akornsavi.to(DEVICE)
 
-    akornsavi.to(DEVICE)
     optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
 
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
                                      num_workers=args.num_workers, is_eval=False, kind='video',
-                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,)
+                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,
+                                     ddp_config=ddp_config)
     val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=False,
                                      num_workers=args.num_workers, is_eval=True, kind='video',
-                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,)
+                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,
+                                     ddp_config=ddp_config)
 
     experiment: CometExperiment = None
     if args.wandb_project is not None and len(args.wandb_project) > 0:
@@ -332,6 +362,9 @@ if __name__ == '__main__':
         n_batches = len(train_dataloader)
         n_updates = n_batches // args.gradient_accumulation_steps
         optimizer.zero_grad()
+        if use_ddp:
+            train_dataloader.sampler.set_epoch(epoch)
+
         train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
         record = defaultdict(float)
         for i, batch in train_pbar:
@@ -452,3 +485,5 @@ if __name__ == '__main__':
             checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
             os.makedirs(checkpoint_folder, exist_ok=True)
             torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
+
+    ddp_cleanup()
