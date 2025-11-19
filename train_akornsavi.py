@@ -26,8 +26,8 @@ TQDM_MIN_INTERVAL = 5
 DEVICE = 'cuda'
 
 
-def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False,
-               image_file_extension=None, kind='image', sequence_length=1, ddp_config={}):
+def get_loader(data, data_root, imsize, batchsize, ddp_config, drop_last=False, num_workers=0, is_eval=False,
+               image_file_extension=None, kind='image', sequence_length=1):
     from source.data.datasets.objs.load_data import load_data
 
     dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind=kind,
@@ -37,7 +37,7 @@ def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=
     if data in ("clevrtex_full", "clevrtex_outd", "clevrtex_camo", "coco"):
         kwargs['collate_fn'] = collate_fn
 
-    if len(ddp_config) > 0:
+    if ddp_config['world_size'] > 1:
         sampler = DistributedSampler(dataset, num_replicas=ddp_config['world_size'],
                                      rank=ddp_config['local_rank'], shuffle=True, drop_last=drop_last)
         del kwargs['shuffle']
@@ -328,24 +328,22 @@ if __name__ == '__main__':
         akornsavi.to(ddp_config['local_rank'])
         akornsavi = DDP(akornsavi, device_ids=[ddp_config['local_rank']])
     else:
-        ddp_config = {}
+        ddp_config = {'world_size': 1, 'rank': 0, 'local_rank': 0}
         akornsavi.to(DEVICE)
 
     optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
 
-    train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
+    train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, ddp_config, drop_last=True,
                                      num_workers=args.num_workers, is_eval=False, kind='video',
-                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,
-                                     ddp_config=ddp_config)
-    val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=False,
+                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
+    val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, ddp_config, drop_last=False,
                                      num_workers=args.num_workers, is_eval=True, kind='video',
-                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length,
-                                     ddp_config=ddp_config)
+                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
 
     experiment: CometExperiment = None
-    if args.wandb_project is not None and len(args.wandb_project) > 0:
+    if args.wandb_project is not None and len(args.wandb_project) > 0 and ddp_config['rank'] == 0:
         experiment = comet_ml.start(project_name=args.wandb_project,)
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
@@ -366,7 +364,11 @@ if __name__ == '__main__':
         if use_ddp:
             train_dataloader.sampler.set_epoch(epoch)
 
-        train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
+        if ddp_config['rank'] == 0:
+            train_pbar = tqdm(enumerate(train_dataloader), desc='Training', mininterval=TQDM_MIN_INTERVAL)
+        else:
+            train_pbar = enumerate(train_dataloader)
+
         record = defaultdict(float)
         for i, batch in train_pbar:
             if isinstance(batch, tuple):
@@ -398,13 +400,15 @@ if __name__ == '__main__':
                     record['train/epoch_features_reconstruction_loss'] = epoch_features_reconstruction_loss / n_updates
                     record['train/epoch_images_reconstruction_loss'] = epoch_images_reconstruction_loss / n_updates
 
-                train_pbar.set_postfix(record, refresh=False)
-                if global_step % n_updates == 0 or global_step % args.log_every_n_steps == 0:
-                    maybe_log_wandb(experiment, global_step, record)
+                if ddp_config['rank'] == 0:
+                    train_pbar.set_postfix(record, refresh=False)
+                    if global_step % n_updates == 0 or global_step % args.log_every_n_steps == 0:
+                        maybe_log_wandb(experiment, global_step, record)
 
                 record = defaultdict(float)
 
-        train_pbar.close()
+        if ddp_config['rank'] == 0:
+            train_pbar.close()
 
         val_loss = 0
         val_features_reconstruction_loss = 0
@@ -416,7 +420,11 @@ if __name__ == '__main__':
         record = {'global_step': global_step, 'epoch': epoch}
         ari_slot_attention = AdjustedRandIndex(ignore_background=True, ignore_overlaps=False)
         ari_decoder = AdjustedRandIndex(ignore_background=True, ignore_overlaps=False)
-        val_pbar = tqdm(enumerate(val_dataloader), desc='Validation', mininterval=TQDM_MIN_INTERVAL)
+        if ddp_config['rank'] == 0:
+            val_pbar = tqdm(enumerate(val_dataloader), desc='Validation', mininterval=TQDM_MIN_INTERVAL)
+        else:
+            val_pbar = enumerate(val_dataloader)
+
         for i, batch in val_pbar:
             if isinstance(batch, tuple):
                 assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
@@ -449,42 +457,43 @@ if __name__ == '__main__':
                     record['val/ari_slot_attention'] = ari_slot_attention.compute().item()
                     record['val/ari_decoder'] = ari_decoder.compute().item()
 
-        val_pbar.set_postfix(record)
-        val_pbar.close()
+        if ddp_config['rank'] == 0:
+            val_pbar.set_postfix(record)
+            val_pbar.close()
 
-        do_need_visualize = epoch % args.visualize_every_n_epochs == 0
-        if do_need_visualize:
-            batch = next(iter(val_dataloader))
-            if isinstance(batch, tuple):
-                assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
-                _, images, gt_masks, _ = batch
-                # treat segmentations with class_id <= 0 as background
-                gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
-                has_gt_masks = True
-            else:
-                images = batch
-                gt_masks = None
-                has_gt_masks = False
+            do_need_visualize = epoch % args.visualize_every_n_epochs == 0
+            if do_need_visualize:
+                batch = next(iter(val_dataloader))
+                if isinstance(batch, tuple):
+                    assert len(batch) == 4, f'Expected 4 elements, but has: {len(batch)}'
+                    _, images, gt_masks, _ = batch
+                    # treat segmentations with class_id <= 0 as background
+                    gt_masks = torch.as_tensor(gt_masks > 0, dtype=gt_masks.dtype) * gt_masks
+                    has_gt_masks = True
+                else:
+                    images = batch
+                    gt_masks = None
+                    has_gt_masks = False
 
-            visualizations = get_visualization(akornsavi, images[:args.visualize_n_images].to(DEVICE),
-                                               gt_masks[:args.visualize_n_images].to(DEVICE) if has_gt_masks else None,
-                                               args.num_slots, has_gt_masks)
+                visualizations = get_visualization(akornsavi, images[:args.visualize_n_images].to(DEVICE),
+                                                   gt_masks[:args.visualize_n_images].to(DEVICE) if has_gt_masks else None,
+                                                   args.num_slots, has_gt_masks)
 
-        maybe_log_wandb(experiment, global_step, record, visualizations)
+            maybe_log_wandb(experiment, global_step, record, visualizations)
 
-        if epoch % args.save_every_n_epochs == 0:
-            checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
-                          'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
-            checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
-            os.makedirs(checkpoint_folder, exist_ok=True)
-            torch.save(checkpoint, os.path.join(checkpoint_folder, 'checkpoint.pt'))
+            if epoch % args.save_every_n_epochs == 0:
+                checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
+                              'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
+                checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
+                os.makedirs(checkpoint_folder, exist_ok=True)
+                torch.save(checkpoint, os.path.join(checkpoint_folder, 'checkpoint.pt'))
 
-        if val_loss <= best_val_loss:
-            best_val_loss = val_loss
-            checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
-                          'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
-            checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
-            os.makedirs(checkpoint_folder, exist_ok=True)
-            torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
+            if val_loss <= best_val_loss:
+                best_val_loss = val_loss
+                checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
+                              'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
+                checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
+                os.makedirs(checkpoint_folder, exist_ok=True)
+                torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
 
     ddp_cleanup()
