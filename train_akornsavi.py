@@ -299,7 +299,7 @@ if __name__ == '__main__':
 
     if torch.cuda.device_count() > 1 and DEVICE == 'cuda':
         print(f"Using {torch.cuda.device_count()} GPUs!")
-        model = nn.DataParallel(akornsavi)
+        akornsavi = nn.DataParallel(akornsavi)
 
     akornsavi.to(DEVICE)
     optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
