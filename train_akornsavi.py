@@ -482,7 +482,12 @@ if __name__ == '__main__':
             maybe_log_wandb(experiment, global_step, record, visualizations)
 
             if epoch % args.save_every_n_epochs == 0:
-                checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
+                if use_ddp:
+                    state_dict = akornsavi.module.state_dict()
+                else:
+                    state_dict = akornsavi.state_dict()
+
+                checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
                               'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
                 checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
                 os.makedirs(checkpoint_folder, exist_ok=True)
@@ -490,7 +495,7 @@ if __name__ == '__main__':
 
             if val_loss <= best_val_loss:
                 best_val_loss = val_loss
-                checkpoint = {'model': akornsavi.state_dict(), 'optimizer': optimizer.state_dict(),
+                checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
                               'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
                 checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
                 os.makedirs(checkpoint_folder, exist_ok=True)
