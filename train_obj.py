@@ -198,6 +198,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--wandb_run_name", type=str, required=False,
     )
+    parser.add_argument(
+        "--wandb_run_id", type=str, required=False,
+    )
     parser.add_argument("--vis_n_clusters", type=int, nargs='+')
     parser.add_argument("--vis_n_images", type=int, default=1)
     
@@ -255,7 +258,8 @@ if __name__ == "__main__":
         config['device_info'] = str(torch.cuda.get_device_properties(torch.cuda.current_device()))
         slurm_job_id_key = 'SLURM_JOB_ID'
         config[slurm_job_id_key] = os.environ.get(slurm_job_id_key, None)
-        experiment = comet_ml.start(project_name=args.wandb_project,)
+        experiment = comet_ml.start(project_name=args.wandb_project, experiment_key=args.wandb_run_id,
+                                    mode='create' if args.wandb_run_id is None else 'get')
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
         experiment.log_parameters(config)
