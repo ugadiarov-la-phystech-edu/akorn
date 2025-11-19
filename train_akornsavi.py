@@ -8,6 +8,7 @@ import torch
 from comet_ml import CometExperiment
 
 from ema_pytorch import EMA
+from torch import nn
 from tqdm import tqdm
 
 from source.models.commons import BroadCastDecoder
@@ -296,6 +297,11 @@ if __name__ == '__main__':
 
                 param = None
 
+    if torch.cuda.device_count() > 1 and DEVICE == 'cuda':
+        print(f"Using {torch.cuda.device_count()} GPUs!")
+        model = nn.DataParallel(akornsavi)
+
+    akornsavi.to(DEVICE)
     optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
     scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
                                                   decay_steps=args.decay_steps, decay_rate=args.decay_rate)
