@@ -1,6 +1,7 @@
 import argparse
 import os
 import logging
+import sys
 
 import comet_ml
 import torch
@@ -263,6 +264,7 @@ if __name__ == "__main__":
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
         experiment.log_parameters(config)
+        experiment.log_system_info('command', ' '.join(sys.argv))
 
     def train(net, ema, opt, scheduler, loader, epoch):
         losses = []
