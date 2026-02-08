@@ -142,7 +142,7 @@ if __name__ == '__main__':
     )
 
     # General model options
-    parser.add_argument("--L", type=int, default=2, help="num of layers")
+    parser.add_argument("--L", type=int, default=1, help="num of layers")
     parser.add_argument("--ch", type=int, default=256, help="num of channels")
     parser.add_argument(
         "--model_imsize",
