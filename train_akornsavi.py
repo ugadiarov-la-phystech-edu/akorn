@@ -212,7 +212,7 @@ if __name__ == '__main__':
     parser.add_argument('--image_decoder', choices=['mlp', 'spatial_broadcast'], type=str, default='mlp')
     parser.add_argument('--image_decoder_hidden_dim', type=int, default=64)
     parser.add_argument("--lr", type=float, default=0.0004)
-    parser.add_argument('--warmup_iters', type=int, default=10000)
+    parser.add_argument('--warmup_iters', type=int, default=2500)
     parser.add_argument('--decay_steps', type=int, default=100000)
     parser.add_argument('--decay_rate', type=float, default=0.5)
     parser.add_argument("--grad_norm_clip", type=float, default=0.1)
@@ -486,9 +486,9 @@ if __name__ == '__main__':
                 state_dict = akornsavi.state_dict()
 
             if epoch % args.save_every_n_epochs == 0:
-
                 checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
-                              'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
+                              'scheduler': scheduler.state_dict(), 'global_step': global_step, 'epoch': epoch,
+                              'val_loss': val_loss,}
                 checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
                 os.makedirs(checkpoint_folder, exist_ok=True)
                 torch.save(checkpoint, os.path.join(checkpoint_folder, 'checkpoint.pt'))
@@ -496,7 +496,8 @@ if __name__ == '__main__':
             if val_loss <= best_val_loss:
                 best_val_loss = val_loss
                 checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
-                              'global_step': global_step, 'epoch': epoch, 'val_loss': val_loss,}
+                              'scheduler': scheduler.state_dict(), 'global_step': global_step, 'epoch': epoch,
+                              'val_loss': val_loss,}
                 checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
                 os.makedirs(checkpoint_folder, exist_ok=True)
                 torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
