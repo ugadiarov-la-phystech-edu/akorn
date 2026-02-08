@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import numpy as np
 from torch.utils.data import Dataset
@@ -16,7 +17,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class EpisodesDataset(Dataset):
-    def __init__(self, root, mode, res=128, extension='png', return_tensor=True, kind='image', sequence_length=1):
+    def __init__(self, root, mode, res=128, extension='png', return_tensor=True, kind='image', sequence_length=1,
+                 episode_folder_pattern='*'):
         assert mode in ['train', 'val', 'valid', 'test']
         if mode in ('valid', 'test'):
             mode = 'val'
@@ -27,14 +29,8 @@ class EpisodesDataset(Dataset):
 
         self.kind = kind
         self.sequence_length = sequence_length
-
-        root = os.path.join(root, mode)
-        root_with_obs = os.path.join(root, 'obs')
-        if os.path.isdir(root_with_obs):
-            self.root = root_with_obs
-        else:
-            self.root = root
-
+        self.episode_folder_pattern = episode_folder_pattern
+        self.root = os.path.join(root, mode)
         self.res = res
         self.mode = mode
         self.extension = extension
@@ -44,14 +40,13 @@ class EpisodesDataset(Dataset):
         # Get all numbers
         self.folders = []
         start = time.time()
-        for file in os.listdir(self.root):
-            try:
-                self.folders.append(file)
-            except ValueError:
-                continue
+        for path in glob.glob(os.path.join(self.root, self.episode_folder_pattern)):
+            if osp.isdir(path):
+                self.folders.append(path)
 
         def get_num(x):
-            parts = x.split('_')
+            name = Path(x).name
+            parts = name.split('_')
             num = parts[0] if len(parts) == 1 else parts[1]
             return int(num)
 
@@ -61,8 +56,7 @@ class EpisodesDataset(Dataset):
         self.episode2offset = [0]
         self.index2episode = []
         for i, f in enumerate(tqdm(self.folders, desc=f"Indexing split: {self.mode}")):
-            dir_name = os.path.join(self.root, str(f))
-            paths = list(glob.glob(osp.join(dir_name, f'*.{self.extension}')))
+            paths = list(glob.glob(osp.join(f, f'*.{self.extension}')))
             actual_length = len(paths)
             get_file_id = lambda x: get_num(osp.splitext(osp.basename(x))[0])
             paths.sort(key=get_file_id)
