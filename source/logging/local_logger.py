@@ -16,7 +16,7 @@ class LocalLogger:
     def log_metrics(self, metrics: Dict[str, float], step: int):
         metrics = dict(metrics)
         metrics["step"] = step
-        with jsonlines.open(self.metrics_file, mode="w") as writer:
+        with jsonlines.open(self.metrics_file, mode="a") as writer:
             writer.write(metrics)
 
     def log_images(self, images: Dict[str, np.ndarray], step: int):
