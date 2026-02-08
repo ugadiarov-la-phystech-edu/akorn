@@ -26,6 +26,14 @@ TQDM_MIN_INTERVAL = 5
 DEVICE = 'cuda'
 
 
+def set_seed(seed):
+    import random
+    import numpy as np
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+
 def get_loader(data, data_root, imsize, batchsize, ddp_config, drop_last=False, num_workers=0, is_eval=False,
                image_file_extension=None, kind='image', sequence_length=1):
     from source.data.datasets.objs.load_data import load_data
@@ -236,10 +244,12 @@ if __name__ == '__main__':
     parser.add_argument("--from_checkpoint", type=str, required=False)
     parser.add_argument("--load_checkpoint_strict", type=str2bool, default=True)
     parser.add_argument("--freeze_loaded_weights", type=str2bool, default=False)
+    parser.add_argument("--seed", type=int, default=0)
 
     args = parser.parse_args()
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.enable_flash_sdp(enabled=True)
+    set_seed(args.seed)
 
     if args.model_imsize % 8 != 0:
         raise ValueError('Image size:', args.model_imsize, 'Patch size:', 8)
