@@ -312,6 +312,11 @@ if __name__ == '__main__':
 
     predictor = TransformerPredictor(slot_dim=args.slot_size, action_dim=-1,)
     akornsavi = AkornSAVi(encoder, features_projector, initializer, slot_attention, decoder, predictor, image_decoder, is_encoder_frozen=True).to('cuda')
+    optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
+    scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
+                                                  decay_steps=args.decay_steps, decay_rate=args.decay_rate)
+    start_epoch = -1
+    global_step = 0
     param_names_to_freeze = set()
     if args.from_checkpoint is not None:
         sd = torch.load(args.from_checkpoint)
@@ -321,6 +326,10 @@ if __name__ == '__main__':
         print('Loading weights from checkpoint:', args.from_checkpoint)
         print('Missing parameters:', missing)
         print('Unexpected parameters:', unexpected)
+        optimizer.load_state_dict(sd['optimizer'])
+        scheduler.load_state_dict(sd['scheduler'])
+        start_epoch = sd['epoch']
+        global_step = sd['global_step']
         if args.freeze_loaded_weights:
             param_names_to_freeze = set(torch.load(args.from_checkpoint)['model'].keys())
             for name, param in akornsavi.named_parameters():
@@ -341,10 +350,6 @@ if __name__ == '__main__':
         ddp_config = {'world_size': 1, 'rank': 0, 'local_rank': 0}
         akornsavi.to(DEVICE)
 
-    optimizer = torch.optim.Adam(akornsavi.parameters(), lr=args.lr)
-    scheduler = ExpDecayWithLinearWarmupScheduler(optimizer, warmup_iters=args.warmup_iters,
-                                                  decay_steps=args.decay_steps, decay_rate=args.decay_rate)
-
     train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, ddp_config, drop_last=True,
                                      num_workers=args.num_workers, is_eval=False, kind='video',
                                      image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
@@ -358,9 +363,8 @@ if __name__ == '__main__':
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
 
-    global_step = 0
     best_val_loss = math.inf
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch + 1, args.epochs):
         akornsavi.train(True)
         not_frozen_params = [name for name, param in akornsavi.named_parameters() if name in param_names_to_freeze and param.requires_grad]
         assert len(not_frozen_params) == 0, f'These parameters are expected to be frozen: {not_frozen_params}'
@@ -498,7 +502,7 @@ if __name__ == '__main__':
             if epoch % args.save_every_n_epochs == 0:
                 checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
                               'scheduler': scheduler.state_dict(), 'global_step': global_step, 'epoch': epoch,
-                              'val_loss': val_loss,}
+                              'val_loss': val_loss, 'best_val_loss': best_val_loss}
                 checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
                 os.makedirs(checkpoint_folder, exist_ok=True)
                 torch.save(checkpoint, os.path.join(checkpoint_folder, 'checkpoint.pt'))
@@ -507,7 +511,7 @@ if __name__ == '__main__':
                 best_val_loss = val_loss
                 checkpoint = {'model': state_dict, 'optimizer': optimizer.state_dict(),
                               'scheduler': scheduler.state_dict(), 'global_step': global_step, 'epoch': epoch,
-                              'val_loss': val_loss,}
+                              'val_loss': val_loss, 'best_val_loss': best_val_loss}
                 checkpoint_folder = os.path.join(args.save_path, args.wandb_run_name)
                 os.makedirs(checkpoint_folder, exist_ok=True)
                 torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
