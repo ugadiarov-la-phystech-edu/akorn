@@ -17,7 +17,7 @@ class LocalLogger:
         metrics = dict(metrics)
         metrics["step"] = step
         with jsonlines.open(self.metrics_file, mode="w") as writer:
-            writer.write_all(metrics)
+            writer.write(metrics)
 
     def log_images(self, images: Dict[str, np.ndarray], step: int):
         step_folder = os.path.join(self.images_folder, f"{step:05d}")
