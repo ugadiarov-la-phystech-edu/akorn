@@ -106,7 +106,7 @@ def load_data(data, data_root, episode_folder_pattern, data_imsize, is_eval=Fals
         )
     elif data == 'episode_dataset':
         from source.data.datasets.objs.episodes_dataset import EpisodesDataset, AugmentedPairEpisodeDataset
-        kwargs = dict(root=data_root, episode_folder_pattern=episode_folder_pattern, split=split, res=data_imsize,
+        kwargs = dict(root=data_root, episode_folder_pattern=episode_folder_pattern, mode=split, res=data_imsize,
                       extension=image_file_extension, kind=kind, sequence_length=sequence_length)
         if kind in ('image', 'video'):
             dataset = EpisodesDataset(**kwargs)
