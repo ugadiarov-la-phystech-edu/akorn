@@ -14,6 +14,7 @@ from torch.utils.data import DistributedSampler
 from ema_pytorch import EMA
 from tqdm import tqdm
 
+from source.logging.local_logger import LocalLogger
 from source.models.commons import BroadCastDecoder
 from source.models.objs.knet import AKOrN
 from source.models.savi import Learned, TransformerPredictor, Corrector
@@ -57,7 +58,12 @@ def get_loader(data, data_root, imsize, batchsize, ddp_config, drop_last=False, 
     return loader, imsize
 
 
-def maybe_log_wandb(experiment: CometExperiment, step, record, visualizations_dict=None):
+def maybe_log_wandb(experiment: CometExperiment, local_logger: LocalLogger, step, record, visualizations_dict=None):
+    if local_logger is not None:
+        local_logger.log_metrics(record, step)
+        if visualizations_dict is not None:
+            local_logger.log_images(visualizations_dict, step)
+
     if experiment is None:
         return
 
@@ -249,6 +255,7 @@ if __name__ == '__main__':
     parser.add_argument("--load_checkpoint_strict", type=str2bool, default=True)
     parser.add_argument("--freeze_loaded_weights", type=str2bool, default=False)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--use_local_logger", type=str2bool, default=False)
 
     args = parser.parse_args()
     torch.backends.cudnn.benchmark = True
@@ -371,6 +378,10 @@ if __name__ == '__main__':
 
         import socket
         experiment.log_system_info('hostname', socket.gethostname())
+    
+    local_logger: LocalLogger = None
+    if args.use_local_logger:
+        local_logger = LocalLogger(args.save_path)
 
     best_val_loss = math.inf
     for epoch in range(start_epoch + 1, args.epochs):
@@ -426,7 +437,7 @@ if __name__ == '__main__':
                 if ddp_config['rank'] == 0:
                     train_pbar.set_postfix(record, refresh=False)
                     if global_step % n_updates == 0 or global_step % args.log_every_n_steps == 0:
-                        maybe_log_wandb(experiment, global_step, record)
+                        maybe_log_wandb(experiment, local_logger, global_step, record)
 
                 record = defaultdict(float)
 
@@ -502,7 +513,7 @@ if __name__ == '__main__':
                                                    gt_masks[:args.visualize_n_images].to(DEVICE) if has_gt_masks else None,
                                                    args.num_slots, has_gt_masks)
 
-            maybe_log_wandb(experiment, global_step, record, visualizations)
+            maybe_log_wandb(experiment, local_logger, global_step, record, visualizations)
             if use_ddp:
                 state_dict = akornsavi.module.state_dict()
             else:
