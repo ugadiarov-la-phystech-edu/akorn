@@ -1,6 +1,7 @@
 import argparse
 import math
 import os
+import sys
 from collections import defaultdict
 
 import comet_ml
@@ -240,6 +241,9 @@ if __name__ == '__main__':
     parser.add_argument(
         "--wandb_run_name", type=str, required=False,
     )
+    parser.add_argument(
+        "--wandb_run_id", type=str, required=False,
+    )
     parser.add_argument("--image_file_extension", type=str, required=False)
     parser.add_argument("--from_checkpoint", type=str, required=False)
     parser.add_argument("--load_checkpoint_strict", type=str2bool, default=True)
@@ -359,9 +363,14 @@ if __name__ == '__main__':
 
     experiment: CometExperiment = None
     if args.wandb_project is not None and len(args.wandb_project) > 0 and ddp_config['rank'] == 0:
-        experiment = comet_ml.start(project_name=args.wandb_project,)
+        mode = 'create' if args.wandb_run_id is None else 'get'
+        experiment = comet_ml.start(project_name=args.wandb_project, experiment_key=args.wandb_run_id, mode=mode)
         experiment.add_tag(args.wandb_run_name)
         experiment.set_name(args.wandb_run_name)
+        experiment.log_system_info('command', ' '.join(sys.argv))
+
+        import socket
+        experiment.log_system_info('hostname', socket.gethostname())
 
     best_val_loss = math.inf
     for epoch in range(start_epoch + 1, args.epochs):
