@@ -362,12 +362,14 @@ if __name__ == '__main__':
         ddp_config = {'world_size': 1, 'rank': 0, 'local_rank': 0}
         akornsavi.to(DEVICE)
 
-    train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, ddp_config, drop_last=True,
-                                     num_workers=args.num_workers, is_eval=False, kind='video',
+    train_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.model_imsize,
+                                     args.batchsize, ddp_config, drop_last=True, num_workers=args.num_workers,
+                                     is_eval=False, kind='video',
                                      image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
-    val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, ddp_config, drop_last=False,
-                                     num_workers=args.num_workers, is_eval=True, kind='video',
-                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
+    val_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.model_imsize,
+                                   args.batchsize, ddp_config, drop_last=False, num_workers=args.num_workers,
+                                   is_eval=True, kind='video', image_file_extension=args.image_file_extension,
+                                   sequence_length=args.sequence_length)
 
     experiment: CometExperiment = None
     if args.wandb_project is not None and len(args.wandb_project) > 0 and ddp_config['rank'] == 0:
