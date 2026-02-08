@@ -36,11 +36,11 @@ def set_seed(seed):
     np.random.seed(seed)
 
 
-def get_loader(data, data_root, imsize, batchsize, ddp_config, drop_last=False, num_workers=0, is_eval=False,
+def get_loader(data, data_root, episode_folder_pattern, imsize, batchsize, ddp_config, drop_last=False, num_workers=0, is_eval=False,
                image_file_extension=None, kind='image', sequence_length=1):
     from source.data.datasets.objs.load_data import load_data
 
-    dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind=kind,
+    dataset, imsize, collate_fn = load_data(data, data_root, episode_folder_pattern, imsize, is_eval=is_eval, kind=kind,
                                             image_file_extension=image_file_extension, sequence_length=sequence_length)
 
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
@@ -145,6 +145,7 @@ if __name__ == '__main__':
         default=None,
         help="optional. you can specify the dir path if the default path of each dataset is not appropritate one. Currently only applied to ImageNet",
     )
+    parser.add_argument("--data_episode_folder_pattern", type=str, default="*")
     parser.add_argument("--batchsize", type=int, default=256)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--sequence_length", type=int, default=8)
