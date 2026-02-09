@@ -106,8 +106,8 @@ class EpisodesDataset(Dataset):
 
 
 class AugmentedPairEpisodeDataset(EpisodesDataset):
-    def __init__(self, root, mode, res=128, extension='png', hflip=False):
-        super().__init__(root, mode, res, extension, return_tensor=False)
+    def __init__(self, root, mode, res=128, extension='png', hflip=False, episode_folder_pattern='*'):
+        super().__init__(root, mode, res, extension, return_tensor=False, episode_folder_pattern=episode_folder_pattern)
         self.transform = simclr_augmentation(imsize=self.res, hflip=hflip)
 
     def __getitem__(self, index):
