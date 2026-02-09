@@ -237,9 +237,9 @@ if __name__ == "__main__":
     else:
         worker_init_fn = None
 
-    sstrainset, imsize, _ = load_data(args.data, args.data_root, args.data_imsize, False,
+    sstrainset, imsize, _ = load_data(args.data, args.data_root, '*', args.data_imsize, False,
                                       image_file_extension=args.image_file_extension)
-    val_dataset, *_ = load_data(args.data, args.data_root, args.data_imsize, True,
+    val_dataset, *_ = load_data(args.data, args.data_root, '*', args.data_imsize, True,
                                       image_file_extension=args.image_file_extension)
 
     if accelerator.is_main_process:

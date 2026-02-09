@@ -25,8 +25,8 @@ def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=
                image_file_extension=None):
     from source.data.datasets.objs.load_data import load_data
 
-    dataset, imsize, collate_fn = load_data(data, data_root, imsize, is_eval=is_eval, kind='image',
-                                            image_file_extension=image_file_extension)
+    dataset, imsize, collate_fn = load_data(data, data_root, '*', imsize, is_eval=is_eval,
+                                            kind='image', image_file_extension=image_file_extension)
 
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
     if data in ("clevrtex_full", "clevrtex_outd", "clevrtex_camo", "coco"):
