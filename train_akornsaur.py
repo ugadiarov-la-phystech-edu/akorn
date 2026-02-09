@@ -21,11 +21,11 @@ TQDM_MIN_INTERVAL = 5
 DEVICE = 'cuda'
 
 
-def get_loader(data, data_root, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False,
+def get_loader(data, data_root, data_episode_folder_pattern, imsize, batchsize, drop_last=False, num_workers=0, is_eval=False,
                image_file_extension=None):
     from source.data.datasets.objs.load_data import load_data
 
-    dataset, imsize, collate_fn = load_data(data, data_root, '*', imsize, is_eval=is_eval,
+    dataset, imsize, collate_fn = load_data(data, data_root, data_episode_folder_pattern, imsize, is_eval=is_eval,
                                             kind='image', image_file_extension=image_file_extension)
 
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
@@ -63,6 +63,7 @@ if __name__ == '__main__':
         default=None,
         help="optional. you can specify the dir path if the default path of each dataset is not appropritate one. Currently only applied to ImageNet",
     )
+    parser.add_argument("--data_episode_folder_pattern", type=str, default="*")
     parser.add_argument("--batchsize", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
@@ -217,12 +218,12 @@ if __name__ == '__main__':
         sd = torch.load(args.from_checkpoint)
         akornsaur.load_state_dict(torch.load(args.from_checkpoint)['model'])
 
-    train_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=True,
-                                     num_workers=args.num_workers, is_eval=False,
+    train_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.model_imsize,
+                                     args.batchsize, drop_last=True, num_workers=args.num_workers, is_eval=False,
                                      image_file_extension=args.image_file_extension)
-    val_dataloader, _ = get_loader(args.data, args.data_root, args.model_imsize, args.batchsize, drop_last=False,
-                                     num_workers=args.num_workers, is_eval=True,
-                                     image_file_extension=args.image_file_extension)
+    val_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.model_imsize,
+                                   args.batchsize, drop_last=False, num_workers=args.num_workers, is_eval=True,
+                                   image_file_extension=args.image_file_extension)
     if args.wandb_project is not None:
         path = os.path.join('wandb', args.wandb_run_name)
         os.makedirs(path, exist_ok=True)

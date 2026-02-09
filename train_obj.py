@@ -108,6 +108,7 @@ if __name__ == "__main__":
         default=None,
         help="Optional. Specify the root dir of the dataset. If None, use a default path set for each dataset",
     )
+    parser.add_argument("--data_episode_folder_pattern", type=str, default="*")
     parser.add_argument("--batchsize", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
@@ -237,10 +238,10 @@ if __name__ == "__main__":
     else:
         worker_init_fn = None
 
-    sstrainset, imsize, _ = load_data(args.data, args.data_root, '*', args.data_imsize, False,
-                                      image_file_extension=args.image_file_extension)
-    val_dataset, *_ = load_data(args.data, args.data_root, '*', args.data_imsize, True,
-                                      image_file_extension=args.image_file_extension)
+    sstrainset, imsize, _ = load_data(args.data, args.data_root, args.data_episode_folder_pattern, args.data_imsize,
+                                      False, image_file_extension=args.image_file_extension)
+    val_dataset, *_ = load_data(args.data, args.data_root, args.data_episode_folder_pattern, args.data_imsize,
+                                True, image_file_extension=args.image_file_extension)
 
     if accelerator.is_main_process:
         logger.info(f"Dataset contains {len(sstrainset):,} images")
