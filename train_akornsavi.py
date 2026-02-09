@@ -539,4 +539,5 @@ if __name__ == '__main__':
                 os.makedirs(checkpoint_folder, exist_ok=True)
                 torch.save(checkpoint, os.path.join(checkpoint_folder, 'best_checkpoint.pt'))
 
-    ddp_cleanup()
+    if use_ddp:
+        ddp_cleanup()
