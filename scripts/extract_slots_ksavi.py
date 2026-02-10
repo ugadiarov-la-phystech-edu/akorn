@@ -37,7 +37,7 @@ def get_visualization(model: AkornSAVi, vis_images: torch.Tensor, gt_masks: torc
                 'images_reconstruction_masks_hard']:
         field = f'{key}_sequence'
         if field in output:
-            visualizations[key] = grid(vis_images, output[field])
+            visualizations[key] = grid(vis_images, output[field], is_reconstruction='mask' not in field)
 
     return visualizations
 

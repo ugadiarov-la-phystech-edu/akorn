@@ -160,8 +160,9 @@ def to_one_hot(tsr, num_classes=-1):
     return torch.nn.functional.one_hot(tsr, num_classes=num_classes).movedim(-1, 1)
 
 
-def vis(source_images, images):
-    if source_images.shape[-3] == images.shape[-3]:
+def vis(source_images, images, is_reconstruction):
+    if is_reconstruction:
+        assert source_images.shape == images.shape, f'{source_images.shape} != {images.shape}'
         # handle reconstructions
         return torch.stack([source_images, images], dim=-4)
 
@@ -173,9 +174,9 @@ def vis(source_images, images):
     return torch.cat([source_images, source_images * images + (1 - images)], dim=-4)
 
 
-def grid(source_images, images):
+def grid(source_images, images, is_reconstruction=False):
     images = images.clamp_(0, 1)
-    attention_maps = vis(source_images, images)
+    attention_maps = vis(source_images, images, is_reconstruction)
     # attention_maps.shape -> ..., n_slots, n_channels, h, w
     log_image = attention_maps.flatten(end_dim=-4)
     log_image = make_grid(log_image, attention_maps.shape[-4], pad_value=0.5).movedim(0, -1).cpu().numpy()
