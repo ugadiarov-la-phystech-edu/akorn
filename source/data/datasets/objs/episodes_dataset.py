@@ -1,3 +1,4 @@
+import io
 import time
 from pathlib import Path
 
@@ -18,7 +19,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 class EpisodesDataset(Dataset):
     def __init__(self, root, mode, res=128, extension='png', return_tensor=True, kind='image', sequence_length=1,
-                 episode_folder_pattern='*'):
+                 episode_folder_pattern='*', cache=False):
         assert mode in ['train', 'val', 'valid', 'test']
         if mode in ('valid', 'test'):
             mode = 'val'
@@ -28,6 +29,7 @@ class EpisodesDataset(Dataset):
             assert sequence_length == 1, f'Expected sequence length: 1. Actual: {sequence_length}'
 
         self.kind = kind
+        self.cache = cache
         self.sequence_length = sequence_length
         self.episode_folder_pattern = episode_folder_pattern
         self.root = os.path.join(root, mode)
@@ -65,6 +67,21 @@ class EpisodesDataset(Dataset):
             self.episode2offset.append(self.episode2offset[-1] + actual_length)
 
         print(f'Dataset indexing took {time.time() - start} seconds')
+
+        if self.cache:
+            # read image files into episode_images as bytes
+            start = time.time()
+            episode_image_bytes = []
+            for paths in tqdm(self.episode_images, desc=f'Caching split: {self.mode}'):
+                image_bytes = []
+                for path in paths:
+                    with open(path, 'rb') as f:
+                        image_bytes.append(io.BytesIO(f.read()))
+
+                episode_image_bytes.append(image_bytes)
+
+            self.episode_images = episode_image_bytes
+            print(f'Dataset caching took {time.time() - start} seconds')
 
     def __getitem__(self, index):
         if self.kind == 'video':
@@ -106,8 +123,9 @@ class EpisodesDataset(Dataset):
 
 
 class AugmentedPairEpisodeDataset(EpisodesDataset):
-    def __init__(self, root, mode, res=128, extension='png', hflip=False, episode_folder_pattern='*'):
-        super().__init__(root, mode, res, extension, return_tensor=False, episode_folder_pattern=episode_folder_pattern)
+    def __init__(self, root, mode, res=128, extension='png', hflip=False, episode_folder_pattern='*', cache=False):
+        super().__init__(root, mode, res, extension, return_tensor=False, episode_folder_pattern=episode_folder_pattern,
+                         cache=cache)
         self.transform = simclr_augmentation(imsize=self.res, hflip=hflip)
 
     def __getitem__(self, index):

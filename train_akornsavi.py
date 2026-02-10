@@ -36,12 +36,13 @@ def set_seed(seed):
     np.random.seed(seed)
 
 
-def get_loader(data, data_root, episode_folder_pattern, imsize, batchsize, ddp_config, drop_last=False, num_workers=0, is_eval=False,
-               image_file_extension=None, kind='image', sequence_length=1):
+def get_loader(data, data_root, episode_folder_pattern, cache, imsize, batchsize, ddp_config, drop_last=False,
+               num_workers=0, is_eval=False, image_file_extension=None, kind='image', sequence_length=1):
     from source.data.datasets.objs.load_data import load_data
 
-    dataset, imsize, collate_fn = load_data(data, data_root, episode_folder_pattern, imsize, is_eval=is_eval, kind=kind,
-                                            image_file_extension=image_file_extension, sequence_length=sequence_length)
+    dataset, imsize, collate_fn = load_data(data, data_root, episode_folder_pattern, cache, imsize, is_eval=is_eval,
+                                            kind=kind, image_file_extension=image_file_extension,
+                                            sequence_length=sequence_length)
 
     kwargs = {'batch_size': batchsize, 'num_workers': num_workers, 'drop_last': drop_last, 'shuffle': True}
     if data in ("clevrtex_full", "clevrtex_outd", "clevrtex_camo", "coco"):
@@ -146,6 +147,7 @@ if __name__ == '__main__':
         help="optional. you can specify the dir path if the default path of each dataset is not appropritate one. Currently only applied to ImageNet",
     )
     parser.add_argument("--data_episode_folder_pattern", type=str, default="*")
+    parser.add_argument("--data_cache", type=str2bool, default=False)
     parser.add_argument("--batchsize", type=int, default=256)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--sequence_length", type=int, default=8)
@@ -362,14 +364,15 @@ if __name__ == '__main__':
         ddp_config = {'world_size': 1, 'rank': 0, 'local_rank': 0}
         akornsavi.to(DEVICE)
 
-    train_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.model_imsize,
-                                     args.batchsize, ddp_config, drop_last=True, num_workers=args.num_workers,
-                                     is_eval=False, kind='video',
-                                     image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
-    val_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.model_imsize,
-                                   args.batchsize, ddp_config, drop_last=False, num_workers=args.num_workers,
-                                   is_eval=True, kind='video', image_file_extension=args.image_file_extension,
-                                   sequence_length=args.sequence_length)
+    train_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.data_cache,
+                                     args.model_imsize, args.batchsize, ddp_config, drop_last=True,
+                                     num_workers=args.num_workers, is_eval=False, kind='video',
+                                     image_file_extension=args.image_file_extension,
+                                     sequence_length=args.sequence_length)
+    val_dataloader, _ = get_loader(args.data, args.data_root, args.data_episode_folder_pattern, args.data_cache,
+                                   args.model_imsize, args.batchsize, ddp_config, drop_last=False,
+                                   num_workers=args.num_workers, is_eval=True, kind='video',
+                                   image_file_extension=args.image_file_extension, sequence_length=args.sequence_length)
 
     experiment: CometExperiment = None
     if args.wandb_project is not None and len(args.wandb_project) > 0 and ddp_config['rank'] == 0:
