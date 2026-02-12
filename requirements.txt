@@ -1,7 +1,7 @@
 torch
 torchvision
-torchaudio
-einops
+#torchaudio
+einops==0.8.1
 jupyter
 matplotlib
 tensorboard
@@ -9,12 +9,15 @@ tqdm
 argparse
 git+https://github.com/fra31/auto-attack
 tensorflow-cpu
-ema_pytorch
+ema_pytorch==0.7.7
 accelerate
 scipy
 scikit-learn
 scikit-image
-timm
+timm==1.0.15
 opencv-python
 pycocotools
 fastcluster
+jsonlines
+wandb
+comet_ml
